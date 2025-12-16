@@ -132,6 +132,32 @@
             man.enable = mkDefault false;
             nixos.enable = mkDefault false;
           };
+
+          networking = {
+            useDHCP = mkDefault false;
+            dhcpcd.enable = mkDefault false;
+            useNetworkd = mkDefault true;
+          };
+
+          systemd.network = {
+            enable = mkDefault true;
+            networks."10-wan" = {
+              matchConfig.Name = mkDefault [ "en*" "eth*" ];
+              networkConfig = {
+                DHCP = mkDefault "yes";
+                IPv6AcceptRA = mkDefault true;
+              };
+              dhcpV4Config = {
+                RouteMetric = mkDefault 1024;
+                UseDNS = mkDefault true;
+              };
+              dhcpV6Config = {
+                RouteMetric = mkDefault 1024;
+                UseDNS = mkDefault true;
+              };
+            };
+          };
+
           environment = {
             systemPackages =
               with pkgs;
