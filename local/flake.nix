@@ -73,15 +73,6 @@
 
                 environment.systemPackages = extraPackages;
 
-                home-manager.users.${username} =
-                  { config, pkgs, ... }:
-                  {
-                    home.username = username;
-                    home.homeDirectory = "/home/${username}";
-                    home.stateVersion = stateVersion;
-                    home.packages = extraPackages;
-                  };
-
                 services.openssh = {
                   enable = true;
                   settings = {

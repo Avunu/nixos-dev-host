@@ -300,10 +300,6 @@
                 runroot = "/run/containers/storage";
               };
             };
-            hypervGuest = {
-              enable = true;
-              videoMode = "1920x1080";
-            };
             oci-containers.backend = "podman";
             podman = {
               autoPrune.enable = true;
