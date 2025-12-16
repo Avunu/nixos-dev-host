@@ -139,10 +139,36 @@
             systemPackages =
               with pkgs;
               lib.flatten [
+                python3.withPackages
+                (
+                  python-pkgs: with python-pkgs; [
+                    black
+                    flake8
+                    isort
+                    pandas
+                    requests
+                  ]
+                )
                 [
+                  bun
+                  ccache
+                  cmake
+                  corepack_22
+                  curl
                   docker-compose
+                  gh
+                  git
+                  gnumake
+                  nano
+                  nixfmt-rfc-style
+                  nixos-container
+                  nixpkgs-fmt
+                  nodejs_22
                   podman-compose
                   podman-tui
+                  pythonPackages
+                  tzdata
+                  wget
                 ]
               ];
           };
