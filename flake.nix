@@ -50,16 +50,10 @@
             kernelPackages = mkDefault pkgs.linuxPackages_latest;
             kernelParams = mkDefault [
               "boot.shell_on_fail"
-              "console=tty0"
-              "fbcon=vc:2-6"
               "i915.enable_guc=3"
               "i915.modeset=1"
-              "loglevel=3"
               "mem_sleep_default=deep"
               "pcie_aspm.policy=powersupersave"
-              "rd.systemd.show_status=false"
-              "rd.udev.log_level=3"
-              "udev.log_priority=3"
             ];
             consoleLogLevel = mkDefault 0;
             loader = {
