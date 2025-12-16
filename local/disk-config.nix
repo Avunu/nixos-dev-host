@@ -31,14 +31,11 @@
                 format = "btrfs";
                 mountpoint = "/";
                 mountOptions = [
-                  "atgc"
-                  "compress_algorithm=zstd"
-                  "compress_chksum"
-                  "gc_merge"
                   "noatime"
+                  "compress_algorithm=zstd"
                 ];
                 extraArgs = [
-                  "-l"
+                  "-L"
                   "root"
                 ];
               };

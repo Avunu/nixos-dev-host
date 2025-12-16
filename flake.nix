@@ -111,14 +111,11 @@
                         format = "btrfs";
                         mountpoint = "/";
                         mountOptions = [
-                          "atgc"
                           "compress_algorithm=zstd"
-                          "compress_chksum"
-                          "gc_merge"
                           "noatime"
                         ];
                         extraArgs = [
-                          "-l"
+                          "-L"
                           "root"
                         ];
                       };
@@ -171,25 +168,6 @@
                   wget
                 ]
               ];
-          };
-
-          fileSystems = mkForce {
-            "/" = {
-              device = "/dev/disk/by-label/root";
-              fsType = "btrfs";
-              options = [
-                "noatime"
-                "compress=zstd"
-              ];
-            };
-            "/boot" = {
-              device = "/dev/disk/by-label/ESP";
-              fsType = "vfat";
-              options = [
-                "noatime"
-                "umask=0077"
-              ];
-            };
           };
 
           nix = {
