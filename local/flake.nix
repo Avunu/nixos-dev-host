@@ -73,14 +73,6 @@
 
                 environment.systemPackages = extraPackages;
 
-                services.openssh = {
-                  enable = true;
-                  settings = {
-                    PermitRootLogin = "yes";
-                    PasswordAuthentication = true;
-                  };
-                };
-
                 system.stateVersion = stateVersion;
               }
             )

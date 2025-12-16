@@ -166,16 +166,15 @@
             systemPackages =
               with pkgs;
               lib.flatten [
-                (python3.withPackages
-                  (
-                    python-pkgs: with python-pkgs; [
-                      black
-                      flake8
-                      isort
-                      pandas
-                      requests
-                    ]
-                  ))
+                (python3.withPackages (
+                  python-pkgs: with python-pkgs; [
+                    black
+                    flake8
+                    isort
+                    pandas
+                    requests
+                  ]
+                ))
                 [
                   bun
                   ccache
@@ -249,11 +248,14 @@
               interval = mkDefault "daily";
             };
             fwupd.enable = mkDefault true;
-            kmscon = {
-              enable = true;
-              hwRender = true;
-            };
             libinput.enable = mkDefault true;
+            openssh = {
+              enable = true;
+              settings = {
+                PermitRootLogin = "yes";
+                PasswordAuthentication = true;
+              };
+            };
             power-profiles-daemon.enable = mkDefault true;
             udisks2.enable = true;
             upower.enable = mkDefault true;
