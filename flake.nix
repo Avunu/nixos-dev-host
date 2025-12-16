@@ -39,8 +39,9 @@
                 "ehci_pci"
                 "nvme"
                 "uhci_hcd"
+                "xhci_pci"
               ];
-              kernelModules = mkDefault [ "fbcon" ];
+              kernelModules = mkDefault [ "kvm-intel" ];
               systemd = {
                 enable = mkDefault true;
                 tpm2.enable = mkDefault true;
