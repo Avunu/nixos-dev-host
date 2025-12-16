@@ -3,16 +3,16 @@
     "disko": {
       "inputs": {
         "nixpkgs": [
-          "devHost",
+          "nixos-dev-host",
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1755519972,
-        "narHash": "sha256-bU4nqi3IpsUZJeyS8Jk85ytlX61i4b0KCxXX9YcOgVc=",
+        "lastModified": 1765794845,
+        "narHash": "sha256-YD5QWlGnusNbZCqR3pxG8tRxx9yUXayLZfAJRWspq2s=",
         "owner": "nix-community",
         "repo": "disko",
-        "rev": "4073ff2f481f9ef3501678ff479ed81402caae6d",
+        "rev": "7194cfe5b7a3660726b0fe7296070eaef601cae9",
         "type": "github"
       },
       "original": {
@@ -21,73 +21,34 @@
         "type": "github"
       }
     },
-    "home-manager": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1755538029,
-        "narHash": "sha256-XVsragfuN8A/tMiPToejH7RofH15toeIGhlXraX+yBo=",
-        "owner": "nix-community",
-        "repo": "home-manager",
-        "rev": "bf450a0844e80e6aa22652d3f3728f20cd974527",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-community",
-        "repo": "home-manager",
-        "type": "github"
-      }
-    },
-    "devHost": {
+    "nixos-dev-host": {
       "inputs": {
         "disko": "disko",
-        "home-manager": [
-          "home-manager"
-        ],
-        "nix-flatpak": "nix-flatpak",
         "nixpkgs": [
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1755549765,
-        "narHash": "sha256-D4RD/lKy6FiVnxwn3Ar2PLZafBOOS6ShaRyz28UeASQ=",
+        "lastModified": 1765906814,
+        "narHash": "sha256-GbmDztUuRsoW8MY8JUcuXykZx8EN6bCEeQzzgH9DOug=",
         "owner": "Avunu",
-        "repo": "nixos-micro-desktop",
-        "rev": "2cb06fb68535506ee417884cced4e354f6d24c73",
+        "repo": "nixos-dev-host",
+        "rev": "7af1082313b75baaaaa018cf38fa2742d18ca5c2",
         "type": "github"
       },
       "original": {
         "owner": "Avunu",
-        "repo": "nixos-micro-desktop",
-        "type": "github"
-      }
-    },
-    "nix-flatpak": {
-      "locked": {
-        "lastModified": 1754777568,
-        "narHash": "sha256-0bBqT+3XncgF8F03RFAamw9vdf0VmaDoIJLTGkjfQZs=",
-        "owner": "gmodena",
-        "repo": "nix-flatpak",
-        "rev": "62f636b87ef6050760a8cb325cadb90674d1e23e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "gmodena",
-        "repo": "nix-flatpak",
+        "repo": "nixos-dev-host",
         "type": "github"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1755186698,
-        "narHash": "sha256-wNO3+Ks2jZJ4nTHMuks+cxAiVBGNuEBXsT29Bz6HASo=",
+        "lastModified": 1765779637,
+        "narHash": "sha256-KJ2wa/BLSrTqDjbfyNx70ov/HdgNBCBBSQP3BIzKnv4=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "fbcf476f790d8a217c3eab4e12033dc4a0f6d23c",
+        "rev": "1306659b587dc277866c7b69eb97e5f07864d8c4",
         "type": "github"
       },
       "original": {
@@ -99,8 +60,7 @@
     },
     "root": {
       "inputs": {
-        "home-manager": "home-manager",
-        "devHost": "devHost",
+        "nixos-dev-host": "nixos-dev-host",
         "nixpkgs": "nixpkgs"
       }
     }
