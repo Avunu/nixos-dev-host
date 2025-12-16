@@ -45,7 +45,7 @@
                 enable = mkDefault true;
                 tpm2.enable = mkDefault true;
               };
-              verbose = mkDefault false;
+              verbose = mkDefault true;
             };
             kernelPackages = mkDefault pkgs.linuxPackages_latest;
             kernelParams = mkDefault [
@@ -57,10 +57,8 @@
               "loglevel=3"
               "mem_sleep_default=deep"
               "pcie_aspm.policy=powersupersave"
-              "quiet"
               "rd.systemd.show_status=false"
               "rd.udev.log_level=3"
-              "splash"
               "udev.log_priority=3"
             ];
             consoleLogLevel = mkDefault 0;
