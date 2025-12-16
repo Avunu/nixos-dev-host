@@ -43,7 +43,7 @@
               ];
               kernelModules = mkDefault [ "kvm-intel" ];
               systemd = {
-                enable = mkDefault true;
+                enable = mkDefault false;
                 tpm2.enable = mkDefault true;
               };
               verbose = mkDefault true;
@@ -130,13 +130,13 @@
           };
 
           networking = {
-            useDHCP = mkDefault false;
-            dhcpcd.enable = mkDefault false;
-            useNetworkd = mkDefault true;
+            useDHCP = mkDefault true;
+            dhcpcd.enable = mkDefault true;
+            useNetworkd = mkDefault false;
           };
 
           systemd.network = {
-            enable = mkDefault true;
+            enable = mkDefault false;
             networks."10-wan" = {
               matchConfig.Name = mkDefault [
                 "en*"
