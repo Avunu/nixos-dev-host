@@ -165,16 +165,16 @@
             systemPackages =
               with pkgs;
               lib.flatten [
-                python3.withPackages
-                (
-                  python-pkgs: with python-pkgs; [
-                    black
-                    flake8
-                    isort
-                    pandas
-                    requests
-                  ]
-                )
+                (python3.withPackages
+                  (
+                    python-pkgs: with python-pkgs; [
+                      black
+                      flake8
+                      isort
+                      pandas
+                      requests
+                    ]
+                  ))
                 [
                   bun
                   ccache

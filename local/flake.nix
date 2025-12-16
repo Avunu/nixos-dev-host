@@ -19,7 +19,7 @@
       diskDevice = "/dev/sda"; # Replace with your disk device
       timeZone = "America/New_York"; # Replace with your timezone
       locale = "en_US.UTF-8"; # Replace with your locale
-      username = "nixos"; # Replace with desired username
+      username = "dylan"; # Replace with desired username
       initialPassword = "password"; # Replace with a secure password
       stateVersion = "25.11"; # NixOS state version
       sshKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILtMd4jTM9A36iVI2R6zw8cApkd7HQExr0ayfHcwaOp/"; # Replace with your SSH public key
