@@ -142,7 +142,10 @@
           systemd.network = {
             enable = mkDefault true;
             networks."10-wan" = {
-              matchConfig.Name = mkDefault [ "en*" "eth*" ];
+              matchConfig.Name = mkDefault [
+                "en*"
+                "eth*"
+              ];
               networkConfig = {
                 DHCP = mkDefault "yes";
                 IPv6AcceptRA = mkDefault true;
@@ -189,7 +192,6 @@
                   nodejs_22
                   podman-compose
                   podman-tui
-                  pythonPackages
                   tzdata
                   wget
                 ]
