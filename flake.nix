@@ -111,8 +111,11 @@
                         format = "btrfs";
                         mountpoint = "/";
                         mountOptions = [
-                          "compress_algorithm=zstd"
+                          "compress=zstd:3"
+                          "discard=async"
                           "noatime"
+                          "space_cache=v2"
+                          "ssd"
                         ];
                         extraArgs = [
                           "-L"
