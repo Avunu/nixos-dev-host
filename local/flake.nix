@@ -15,7 +15,7 @@
     }:
     let
       # Configuration variables
-      hostName = "nix-dev-host"; # Replace with desired hostname
+      hostName = "nix-dev-host"; # Replace with desired hostname (matches FQDN prefix)
       diskDevice = "/dev/sda"; # Replace with your disk device
       timeZone = "America/New_York"; # Replace with your timezone
       locale = "en_US.UTF-8"; # Replace with your locale

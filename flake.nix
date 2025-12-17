@@ -130,13 +130,13 @@
           };
 
           networking = {
-            useDHCP = mkDefault true;
-            dhcpcd.enable = mkDefault true;
+            useDHCP = mkDefault false;
+            dhcpcd.enable = mkDefault false;
             useNetworkd = mkDefault false;
           };
 
           systemd.network = {
-            enable = mkDefault false;
+            enable = mkDefault true;
             networks."10-wan" = {
               matchConfig.Name = mkDefault [
                 "en*"
@@ -184,7 +184,7 @@
                   nixfmt-rfc-style
                   nixos-container
                   nixpkgs-fmt
-                  nodejs_22
+                  nodejs_24
                   podman-compose
                   podman-tui
                   tzdata
