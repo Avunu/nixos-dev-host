@@ -15,22 +15,9 @@
     }:
     let
       # Configuration variables
-      hostName = "nix-dev-host"; # Replace with desired hostname (matches FQDN prefix)
-      diskDevice = "/dev/sda"; # Replace with your disk device
-      timeZone = "America/New_York"; # Replace with your timezone
-      locale = "en_US.UTF-8"; # Replace with your locale
-      username = "dylan"; # Replace with desired username
-      initialPassword = "password"; # Replace with a secure password
-      stateVersion = "25.11"; # NixOS state version
-      sshKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILtMd4jTM9A36iVI2R6zw8cApkd7HQExr0ayfHcwaOp/"; # Replace with your SSH public key
+      hostName = "nix-dev-host";
+      username = "dylan";
       system = "x86_64-linux";
-      extraPackages = with nixpkgs.legacyPackages.x86_64-linux; [
-        # Add any non-flatpak software you want on this particular machine
-        # for example, insync:
-        # insync
-        # insync-emblem-icons
-        # insync-nautilus
-      ];
     in
     {
       nixosConfigurations = {
@@ -39,44 +26,23 @@
           modules = [
             { nix.nixPath = [ "nixpkgs=${self.inputs.nixpkgs}" ]; }
             nixos-dev-host.nixosModules.devHost
-            # ./hardware-configuration.nix
-            (
-              {
-                config,
-                lib,
-                pkgs,
-                ...
-              }:
-              {
-                disko.devices.disk.main.device = diskDevice;
-
-                networking.hostName = hostName;
-
-                time.timeZone = timeZone;
-
-                i18n.defaultLocale = locale;
-
-                users.users = {
-                  ${username} =
-                    { pkgs, ... }:
-                    {
-                      extraGroups = [
-                        "wheel"
-                      ];
-                      initialPassword = initialPassword;
-                      isNormalUser = true;
-                      openssh.authorizedKeys.keys = [ sshKey ];
-                    };
-                  root = {
-                    openssh.authorizedKeys.keys = [ sshKey ];
-                  };
-                };
-
-                environment.systemPackages = extraPackages;
-
-                system.stateVersion = stateVersion;
-              }
-            )
+            {
+              devHost = {
+                hostName = hostName;
+                diskDevice = "/dev/sda";
+                timeZone = "America/New_York";
+                locale = "en_US.UTF-8";
+                username = username;
+                initialPassword = "password";
+                sshKeys = [
+                  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILtMd4jTM9A36iVI2R6zw8cApkd7HQExr0ayfHcwaOp/"
+                ];
+                stateVersion = "25.11";
+                extraPackages = with nixpkgs.legacyPackages.${system}; [
+                  # Add any additional packages here
+                ];
+              };
+            }
           ];
         };
       };
