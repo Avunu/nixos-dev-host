@@ -29,11 +29,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1765915725,
-        "narHash": "sha256-961/GhMfP0AFuE2ik3A+TZo+SYz3pJby9bSuRNMp+Z0=",
+        "lastModified": 1765917737,
+        "narHash": "sha256-x6Hcjw7nO/6oVgXAYHOXkdl4SInp181p4ICws9zI3q8=",
         "owner": "Avunu",
         "repo": "nixos-dev-host",
-        "rev": "a7ce2ba96b940951280a34f5c59a3313c566048a",
+        "rev": "940bb0df585562954a9a61841f3d46f0cfe3cb13",
         "type": "github"
       },
       "original": {

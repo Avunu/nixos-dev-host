@@ -48,7 +48,7 @@
               };
               verbose = mkDefault true;
             };
-            kernelPackages = mkDefault pkgs.linuxPackages_latest;
+            # kernelPackages = mkDefault pkgs.linuxPackages_latest;
             kernelParams = mkDefault [
               "boot.shell_on_fail"
               "i915.enable_guc=3"

@@ -1,1 +1,1 @@
-nix run github:nix-community/nixos-anywhere -- --flake .#nix-dev-host --target-host root@192.168.0.56 --generate-hardware-config nixos-generate-config ./hardware-configuration.nix
+nix run github:nix-community/nixos-anywhere -- --flake .#nix-dev-host --target-host root@192.168.0.56

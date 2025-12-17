@@ -39,7 +39,7 @@
           modules = [
             { nix.nixPath = [ "nixpkgs=${self.inputs.nixpkgs}" ]; }
             nixos-dev-host.nixosModules.devHost
-            ./hardware-configuration.nix
+            # ./hardware-configuration.nix
             (
               {
                 config,
