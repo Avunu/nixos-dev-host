@@ -238,12 +238,32 @@
           };
 
           services = {
+
+            avahi = {
+              enable = true;
+              nssmdns4 = true;
+              publish.addresses = true;
+              publish.enable = true;
+              publish.workstation = true;
+            };
+
+            bpftune.enable = true;
+
+            btrfs = {
+              autoScrub.enable = true;
+              autoScrub.fileSystems = [ "/" ];
+              autoScrub.interval = "weekly";
+            };
+
             fstrim = {
               enable = mkDefault true;
               interval = mkDefault "daily";
             };
+
             fwupd.enable = mkDefault true;
+
             libinput.enable = mkDefault true;
+
             openssh = {
               enable = true;
               settings = {
@@ -251,9 +271,13 @@
                 PasswordAuthentication = true;
               };
             };
+
             power-profiles-daemon.enable = mkDefault true;
+
             udisks2.enable = true;
+
             upower.enable = mkDefault true;
+
           };
 
           systemd = {
