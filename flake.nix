@@ -28,7 +28,14 @@
           ...
         }:
         with lib;
+        let
+          cfg = config.devHost;
+        in
         {
+          imports = [
+            disko.nixosModules.disko
+          ];
+
           options.devHost = {
             hostName = mkOption {
               type = types.str;
@@ -75,371 +82,363 @@
             };
           };
 
-          config =
-            let
-              cfg = config.devHost;
-            in
-            {
-              imports = [
-                disko.nixosModules.disko
-              ];
-
-              boot = {
-                initrd = {
-                  availableKernelModules = mkDefault [
-                    "ahci"
-                    "ehci_pci"
-                    "nvme"
-                    "uhci_hcd"
-                    "xhci_pci"
-                  ];
-                  kernelModules = mkDefault [ "kvm-intel" ];
-                  systemd = {
-                    enable = mkDefault false;
-                    tpm2.enable = mkDefault true;
-                  };
-                  verbose = mkDefault true;
-                };
-                # kernelPackages = mkDefault pkgs.linuxPackages_latest;
-                kernelParams = mkDefault [
-                  "boot.shell_on_fail"
-                  "i915.enable_guc=3"
-                  "i915.modeset=1"
-                  "mem_sleep_default=deep"
-                  "pcie_aspm.policy=powersupersave"
+          config = {
+            boot = {
+              initrd = {
+                availableKernelModules = mkDefault [
+                  "ahci"
+                  "ehci_pci"
+                  "nvme"
+                  "uhci_hcd"
+                  "xhci_pci"
                 ];
-                consoleLogLevel = mkDefault 0;
-                loader = {
-                  efi.canTouchEfiVariables = mkDefault true;
-                  systemd-boot = {
-                    configurationLimit = mkDefault 10;
-                    enable = mkDefault true;
-                  };
+                kernelModules = mkDefault [ "kvm-intel" ];
+                systemd = {
+                  enable = mkDefault false;
+                  tpm2.enable = mkDefault true;
                 };
-                plymouth.enable = mkDefault false;
+                verbose = mkDefault true;
               };
-
-              console = {
-                keyMap = mkDefault "us";
-                packages = mkDefault [ pkgs.terminus_font ];
+              # kernelPackages = mkDefault pkgs.linuxPackages_latest;
+              kernelParams = mkDefault [
+                "boot.shell_on_fail"
+                "i915.enable_guc=3"
+                "i915.modeset=1"
+                "mem_sleep_default=deep"
+                "pcie_aspm.policy=powersupersave"
+              ];
+              consoleLogLevel = mkDefault 0;
+              loader = {
+                efi.canTouchEfiVariables = mkDefault true;
+                systemd-boot = {
+                  configurationLimit = mkDefault 10;
+                  enable = mkDefault true;
+                };
               };
+              plymouth.enable = mkDefault false;
+            };
 
-              disko.devices = {
-                disk = {
-                  main = {
-                    device = cfg.diskDevice;
-                    type = "disk";
-                    content = {
-                      type = "gpt";
-                      partitions = {
-                        ESP = {
-                          size = "1G";
-                          type = "EF00";
-                          content = {
-                            type = "filesystem";
-                            format = "vfat";
-                            mountpoint = "/boot";
-                            mountOptions = [
-                              "noatime"
-                              "umask=0077"
-                            ];
-                            extraArgs = [
-                              "-n"
-                              "ESP"
-                            ];
-                          };
+            console = {
+              keyMap = mkDefault "us";
+              packages = mkDefault [ pkgs.terminus_font ];
+            };
+
+            disko.devices = {
+              disk = {
+                main = {
+                  device = cfg.diskDevice;
+                  type = "disk";
+                  content = {
+                    type = "gpt";
+                    partitions = {
+                      ESP = {
+                        size = "1G";
+                        type = "EF00";
+                        content = {
+                          type = "filesystem";
+                          format = "vfat";
+                          mountpoint = "/boot";
+                          mountOptions = [
+                            "noatime"
+                            "umask=0077"
+                          ];
+                          extraArgs = [
+                            "-n"
+                            "ESP"
+                          ];
                         };
-                        root = {
-                          size = "100%";
-                          content = {
-                            type = "filesystem";
-                            format = "btrfs";
-                            mountpoint = "/";
-                            mountOptions = [
-                              "compress=zstd:3"
-                              "discard=async"
-                              "noatime"
-                              "space_cache=v2"
-                              "ssd"
-                            ];
-                            extraArgs = [
-                              "-L"
-                              "root"
-                            ];
-                          };
+                      };
+                      root = {
+                        size = "100%";
+                        content = {
+                          type = "filesystem";
+                          format = "btrfs";
+                          mountpoint = "/";
+                          mountOptions = [
+                            "compress=zstd:3"
+                            "discard=async"
+                            "noatime"
+                            "space_cache=v2"
+                            "ssd"
+                          ];
+                          extraArgs = [
+                            "-L"
+                            "root"
+                          ];
                         };
                       };
                     };
                   };
                 };
               };
-
-              documentation = {
-                enable = mkDefault false;
-                doc.enable = mkDefault false;
-                man.enable = mkDefault false;
-                nixos.enable = mkDefault false;
-              };
-
-              networking = {
-                hostName = cfg.hostName;
-                useDHCP = mkDefault false;
-                dhcpcd.enable = mkDefault false;
-                useNetworkd = mkDefault false;
-              };
-
-              systemd.network = {
-                enable = mkDefault true;
-                networks."10-wan" = {
-                  matchConfig.Name = mkDefault [
-                    "en*"
-                    "eth*"
-                  ];
-                  networkConfig = {
-                    DHCP = mkDefault "yes";
-                    IPv6AcceptRA = mkDefault true;
-                  };
-                  dhcpV4Config = {
-                    RouteMetric = mkDefault 1024;
-                    UseDNS = mkDefault true;
-                  };
-                  dhcpV6Config = {
-                    RouteMetric = mkDefault 1024;
-                    UseDNS = mkDefault true;
-                  };
-                };
-              };
-
-              time.timeZone = cfg.timeZone;
-
-              i18n.defaultLocale = cfg.locale;
-
-              users.users = {
-                ${cfg.username} = {
-                  extraGroups = [ "wheel" ];
-                  initialPassword = cfg.initialPassword;
-                  isNormalUser = true;
-                  openssh.authorizedKeys.keys = cfg.sshKeys;
-                };
-                root = {
-                  openssh.authorizedKeys.keys = cfg.sshKeys;
-                };
-              };
-
-              environment = {
-                systemPackages =
-                  with pkgs;
-                  lib.flatten [
-                    (python3.withPackages (
-                      python-pkgs: with python-pkgs; [
-                        black
-                        flake8
-                        isort
-                        pandas
-                        requests
-                      ]
-                    ))
-                    [
-                      bun
-                      ccache
-                      cmake
-                      corepack_22
-                      curl
-                      docker-compose
-                      gh
-                      git
-                      gnumake
-                      nano
-                      nixfmt-rfc-style
-                      nixos-container
-                      nixpkgs-fmt
-                      nodejs_24
-                      podman-compose
-                      podman-tui
-                      tzdata
-                      wget
-                    ]
-                    cfg.extraPackages
-                  ];
-              };
-
-              nix = {
-                gc = {
-                  automatic = mkDefault true;
-                  dates = mkDefault "weekly";
-                  options = mkDefault "--delete-older-than 1w";
-                };
-                settings = {
-                  auto-optimise-store = true;
-                  experimental-features = [
-                    "nix-command"
-                    "flakes"
-                  ];
-                  substituters = [
-                    "https://cache.nixos.org?priority=40"
-                    "https://nix-community.cachix.org?priority=41"
-                  ];
-                  trusted-public-keys = [
-                    "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-                    "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
-                  ];
-                  trusted-users = [
-                    "root"
-                    cfg.username
-                    "@wheel"
-                  ];
-                };
-              };
-
-              nixpkgs = {
-                config = {
-                  allowUnfree = mkDefault true;
-                };
-              };
-
-              programs = {
-                git = {
-                  enable = true;
-                  config.safe.directory = [ "/etc/nixos" ];
-                };
-                nix-ld = {
-                  enable = mkDefault true;
-                };
-              };
-
-              services = {
-
-                avahi = {
-                  enable = true;
-                  nssmdns4 = true;
-                  publish.addresses = true;
-                  publish.enable = true;
-                  publish.workstation = true;
-                };
-
-                bpftune.enable = true;
-
-                btrfs = {
-                  autoScrub.enable = true;
-                  autoScrub.fileSystems = [ "/" ];
-                  autoScrub.interval = "weekly";
-                };
-
-                fstrim = {
-                  enable = mkDefault true;
-                  interval = mkDefault "daily";
-                };
-
-                fwupd.enable = mkDefault true;
-
-                libinput.enable = mkDefault true;
-
-                openssh = {
-                  enable = true;
-                  settings = {
-                    PermitRootLogin = "yes";
-                    PasswordAuthentication = true;
-                  };
-                };
-
-                power-profiles-daemon.enable = mkDefault true;
-
-                samba = {
-                  enable = mkDefault true;
-                  openFirewall = mkDefault true;
-                  settings = {
-                    global = {
-                      "workgroup" = mkDefault "WORKGROUP";
-                      "server string" = mkDefault "NixOS Dev Host - ${cfg.hostName}";
-                      "netbios name" = mkDefault cfg.hostName;
-                      "security" = "user";
-                      "hosts allow" = mkDefault "192.168.0.0/16 172.16.0.0/12 10.0.0.0/8 localhost";
-                      "hosts deny" = mkDefault "0.0.0.0/0";
-                      "guest account" = "nobody";
-                      "map to guest" = "bad user";
-                    };
-                    homes = {
-                      "comment" = "Home Directories";
-                      "browseable" = "no";
-                      "read only" = "no";
-                      "create mask" = "0700";
-                      "directory mask" = "0700";
-                      "valid users" = "%S";
-                    };
-                  };
-                };
-
-                samba-wsdd = {
-                  enable = mkDefault true;
-                  openFirewall = mkDefault true;
-                };
-
-                udisks2.enable = true;
-
-                upower.enable = mkDefault true;
-
-              };
-
-              systemd = {
-                services.flake-update = {
-                  unitConfig = {
-                    Description = "Update flake inputs";
-                    StartLimitIntervalSec = 300;
-                    StartLimitBurst = 5;
-                  };
-                  serviceConfig = {
-                    ExecStart = "${pkgs.nix}/bin/nix flake update --commit-lock-file --flake /home/${cfg.username}/flake.nix";
-                    Restart = "on-failure";
-                    RestartSec = "120s";
-                    Type = "oneshot";
-                    User = cfg.username;
-                    Environment = "HOME=/home/${cfg.username}";
-                  };
-                  wants = [ "network-online.target" ];
-                  after = [ "network-online.target" ];
-                  before = [ "nixos-upgrade.service" ];
-                  path = with pkgs; [
-                    nix
-                    git
-                    host
-                  ];
-                  requiredBy = [ "nixos-upgrade.service" ];
-                };
-              };
-
-              system.autoUpgrade = {
-                allowReboot = mkDefault false;
-                enable = mkDefault true;
-                flake = mkDefault "/home/${cfg.username}/flake.nix";
-                schedule = mkDefault "daily";
-              };
-
-              system.stateVersion = cfg.stateVersion;
-
-              users.defaultUserShell = pkgs.bashInteractive;
-
-              virtualisation = {
-                containers.storage.settings = {
-                  storage = {
-                    driver = "btrfs";
-                    graphroot = "/var/lib/containers/storage";
-                    runroot = "/run/containers/storage";
-                  };
-                };
-                oci-containers.backend = "podman";
-                podman = {
-                  autoPrune.enable = true;
-                  defaultNetwork.settings = {
-                    dns_enabled = true;
-                  };
-                  dockerCompat = true;
-                  dockerSocket.enable = true;
-                  enable = true;
-                };
-              };
-
-              zramSwap.enable = mkDefault true;
             };
+
+            documentation = {
+              enable = mkDefault false;
+              doc.enable = mkDefault false;
+              man.enable = mkDefault false;
+              nixos.enable = mkDefault false;
+            };
+
+            networking = {
+              hostName = cfg.hostName;
+              useDHCP = mkDefault false;
+              dhcpcd.enable = mkDefault false;
+              useNetworkd = mkDefault false;
+            };
+
+            systemd.network = {
+              enable = mkDefault true;
+              networks."10-wan" = {
+                matchConfig.Name = mkDefault [
+                  "en*"
+                  "eth*"
+                ];
+                networkConfig = {
+                  DHCP = mkDefault "yes";
+                  IPv6AcceptRA = mkDefault true;
+                };
+                dhcpV4Config = {
+                  RouteMetric = mkDefault 1024;
+                  UseDNS = mkDefault true;
+                };
+                dhcpV6Config = {
+                  RouteMetric = mkDefault 1024;
+                  UseDNS = mkDefault true;
+                };
+              };
+            };
+
+            time.timeZone = cfg.timeZone;
+
+            i18n.defaultLocale = cfg.locale;
+
+            users.users = {
+              ${cfg.username} = {
+                extraGroups = [ "wheel" ];
+                initialPassword = cfg.initialPassword;
+                isNormalUser = true;
+                openssh.authorizedKeys.keys = cfg.sshKeys;
+              };
+              root = {
+                openssh.authorizedKeys.keys = cfg.sshKeys;
+              };
+            };
+
+            environment = {
+              systemPackages =
+                with pkgs;
+                lib.flatten [
+                  (python3.withPackages (
+                    python-pkgs: with python-pkgs; [
+                      black
+                      flake8
+                      isort
+                      pandas
+                      requests
+                    ]
+                  ))
+                  [
+                    bun
+                    ccache
+                    cmake
+                    corepack_22
+                    curl
+                    docker-compose
+                    gh
+                    git
+                    gnumake
+                    nano
+                    nixfmt-rfc-style
+                    nixos-container
+                    nixpkgs-fmt
+                    nodejs_24
+                    podman-compose
+                    podman-tui
+                    tzdata
+                    wget
+                  ]
+                  cfg.extraPackages
+                ];
+            };
+
+            nix = {
+              gc = {
+                automatic = mkDefault true;
+                dates = mkDefault "weekly";
+                options = mkDefault "--delete-older-than 1w";
+              };
+              settings = {
+                auto-optimise-store = true;
+                experimental-features = [
+                  "nix-command"
+                  "flakes"
+                ];
+                substituters = [
+                  "https://cache.nixos.org?priority=40"
+                  "https://nix-community.cachix.org?priority=41"
+                ];
+                trusted-public-keys = [
+                  "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+                  "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+                ];
+                trusted-users = [
+                  "root"
+                  cfg.username
+                  "@wheel"
+                ];
+              };
+            };
+
+            nixpkgs = {
+              config = {
+                allowUnfree = mkDefault true;
+              };
+            };
+
+            programs = {
+              git = {
+                enable = true;
+                config.safe.directory = [ "/home/${cfg.username}/" ];
+              };
+              nix-ld = {
+                enable = mkDefault true;
+              };
+            };
+
+            services = {
+
+              avahi = {
+                enable = true;
+                nssmdns4 = true;
+                publish.addresses = true;
+                publish.enable = true;
+                publish.workstation = true;
+              };
+
+              bpftune.enable = true;
+
+              btrfs = {
+                autoScrub.enable = true;
+                autoScrub.fileSystems = [ "/" ];
+                autoScrub.interval = "weekly";
+              };
+
+              fstrim = {
+                enable = mkDefault true;
+                interval = mkDefault "daily";
+              };
+
+              fwupd.enable = mkDefault true;
+
+              libinput.enable = mkDefault true;
+
+              openssh = {
+                enable = true;
+                settings = {
+                  PermitRootLogin = "yes";
+                  PasswordAuthentication = true;
+                };
+              };
+
+              power-profiles-daemon.enable = mkDefault true;
+
+              samba = {
+                enable = mkDefault true;
+                openFirewall = mkDefault true;
+                settings = {
+                  global = {
+                    "workgroup" = mkDefault "WORKGROUP";
+                    "server string" = mkDefault "NixOS Dev Host - ${cfg.hostName}";
+                    "netbios name" = mkDefault cfg.hostName;
+                    "security" = "user";
+                    "hosts allow" = mkDefault "192.168.0.0/16 172.16.0.0/12 10.0.0.0/8 localhost";
+                    "hosts deny" = mkDefault "0.0.0.0/0";
+                    "guest account" = "nobody";
+                    "map to guest" = "bad user";
+                  };
+                  homes = {
+                    "comment" = "Home Directories";
+                    "browseable" = "no";
+                    "read only" = "no";
+                    "create mask" = "0700";
+                    "directory mask" = "0700";
+                    "valid users" = "%S";
+                  };
+                };
+              };
+
+              samba-wsdd = {
+                enable = mkDefault true;
+                openFirewall = mkDefault true;
+              };
+
+              udisks2.enable = true;
+
+              upower.enable = mkDefault true;
+
+            };
+
+            systemd = {
+              services.flake-update = {
+                unitConfig = {
+                  Description = "Update flake inputs";
+                  StartLimitIntervalSec = 300;
+                  StartLimitBurst = 5;
+                };
+                serviceConfig = {
+                  ExecStart = "${pkgs.nix}/bin/nix flake update --commit-lock-file --flake /home/${cfg.username}/flake.nix";
+                  Restart = "on-failure";
+                  RestartSec = "120s";
+                  Type = "oneshot";
+                  User = cfg.username;
+                  Environment = "HOME=/home/${cfg.username}";
+                };
+                wants = [ "network-online.target" ];
+                after = [ "network-online.target" ];
+                before = [ "nixos-upgrade.service" ];
+                path = with pkgs; [
+                  nix
+                  git
+                  host
+                ];
+                requiredBy = [ "nixos-upgrade.service" ];
+              };
+            };
+
+            system.autoUpgrade = {
+              allowReboot = mkDefault false;
+              enable = mkDefault true;
+              flake = mkDefault "/home/${cfg.username}/flake.nix";
+              schedule = mkDefault "daily";
+            };
+
+            system.stateVersion = cfg.stateVersion;
+
+            users.defaultUserShell = pkgs.bashInteractive;
+
+            virtualisation = {
+              containers.storage.settings = {
+                storage = {
+                  driver = "btrfs";
+                  graphroot = "/var/lib/containers/storage";
+                  runroot = "/run/containers/storage";
+                };
+              };
+              oci-containers.backend = "podman";
+              podman = {
+                autoPrune.enable = true;
+                defaultNetwork.settings = {
+                  dns_enabled = true;
+                };
+                dockerCompat = true;
+                dockerSocket.enable = true;
+                enable = true;
+              };
+            };
+
+            zramSwap.enable = mkDefault true;
+          };
         };
     };
 }

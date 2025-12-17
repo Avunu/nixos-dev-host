@@ -19,9 +19,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "📋 Copying flake configuration to /etc/nixos..."
-# Copy the local flake.nix to /etc/nixos on the target system
-cp flake.nix "/home/${USERNAME}/flake.nix"
+echo "📋 Copying flake configuration to ${temp}/home/${USERNAME}..."
+# Copy the local flake.nix to "/home/${USERNAME}/ on the target system
+mkdir -p "${temp}/home/${USERNAME}"
+cp flake.nix "${temp}/home/${USERNAME}/flake.nix"
+chmod 777 "${temp}/home/${USERNAME}/flake.nix"
 
 echo "🔧 Running nixos-anywhere..."
 # Install NixOS to the host system with our secrets and flake
