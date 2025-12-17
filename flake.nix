@@ -392,7 +392,7 @@
                     Restart = "on-failure";
                     RestartSec = "120s";
                     Type = "oneshot";
-                    User = ${cfg.username};
+                    User = cfg.username;
                     Environment = "HOME=/home/${cfg.username}";
                   };
                   wants = [ "network-online.target" ];
