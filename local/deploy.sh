@@ -4,6 +4,7 @@ set -euo pipefail
 # Parse arguments
 FQDN="${1:-nix-dev-host.local}"
 IP_ADDRESS="${2:-192.168.0.56}"
+USERNAME="${3:-admin}"
 HOSTNAME="${FQDN%%.*}"  # Extract hostname from FQDN (everything before first dot)
 
 echo "🚀 Deploying NixOS Development Host to $FQDN (hostname: $HOSTNAME)"
@@ -20,7 +21,7 @@ trap cleanup EXIT
 
 echo "📋 Copying flake configuration to /etc/nixos..."
 # Copy the local flake.nix to /etc/nixos on the target system
-cp flake.nix "$temp/etc/nixos/flake.nix"
+cp flake.nix "/home/${USERNAME}/flake.nix"
 
 echo "🔧 Running nixos-anywhere..."
 # Install NixOS to the host system with our secrets and flake
