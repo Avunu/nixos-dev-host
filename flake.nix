@@ -407,10 +407,14 @@
             };
 
             system.autoUpgrade = {
-              allowReboot = mkDefault false;
+              allowReboot = mkDefault true;
               enable = mkDefault true;
               flake = mkDefault "/home/${cfg.username}/flake.nix";
-              schedule = mkDefault "daily";
+              rebootWindow = mkDefault {
+                lower = "01:00";
+                upper = "05:00";
+              };
+              runGarbageCollection = mkDefault true;
             };
 
             system.stateVersion = cfg.stateVersion;

@@ -4,7 +4,7 @@ set -euo pipefail
 # Parse arguments
 FQDN="${1:-nix-dev-host.local}"
 IP_ADDRESS="${2:-192.168.0.56}"
-USERNAME="${3:-admin}"
+USERNAME="${3:-dylan}"
 HOSTNAME="${FQDN%%.*}"  # Extract hostname from FQDN (everything before first dot)
 
 echo "🚀 Deploying NixOS Development Host to $FQDN (hostname: $HOSTNAME)"
