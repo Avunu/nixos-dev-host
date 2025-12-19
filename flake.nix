@@ -387,12 +387,11 @@
                   StartLimitBurst = 5;
                 };
                 serviceConfig = {
-                  ExecStart = "${pkgs.nix}/bin/nix flake update --commit-lock-file --flake /home/${cfg.username}/flake.nix";
+                  ExecStart = "${pkgs.nix}/bin/nix flake update --commit-lock-file --flake /etc/nixos";
                   Restart = "on-failure";
                   RestartSec = "120s";
                   Type = "oneshot";
-                  User = cfg.username;
-                  Environment = "HOME=/home/${cfg.username}";
+                  User = "root";
                 };
                 wants = [ "network-online.target" ];
                 after = [ "network-online.target" ];
@@ -409,7 +408,7 @@
             system.autoUpgrade = {
               allowReboot = mkDefault true;
               enable = mkDefault true;
-              flake = mkDefault "/home/${cfg.username}/flake.nix";
+              flake = mkDefault "/etc/nixos";
               rebootWindow = mkDefault {
                 lower = "01:00";
                 upper = "05:00";
