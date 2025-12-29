@@ -427,16 +427,18 @@
 
             time.timeZone = cfg.timeZone;
 
-            users.users = {
-              ${cfg.username} = {
-                extraGroups = [ "wheel" ];
-                initialPassword = cfg.initialPassword;
-                isNormalUser = true;
-                openssh.authorizedKeys.keys = cfg.sshKeys;
-              };
+            users = {
               defaultUserShell = pkgs.bashInteractive;
-              root = {
-                openssh.authorizedKeys.keys = cfg.sshKeys;
+              users = {
+                ${cfg.username} = {
+                  extraGroups = [ "wheel" ];
+                  initialPassword = cfg.initialPassword;
+                  isNormalUser = true;
+                  openssh.authorizedKeys.keys = cfg.sshKeys;
+                };
+                root = {
+                  openssh.authorizedKeys.keys = cfg.sshKeys;
+                };
               };
             };
 
