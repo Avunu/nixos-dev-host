@@ -209,8 +209,6 @@
               };
             };
 
-            time.timeZone = cfg.timeZone;
-
             i18n.defaultLocale = cfg.locale;
 
             environment = {
@@ -413,17 +411,21 @@
               };
             };
 
-            system.autoUpgrade = {
-              allowReboot = mkDefault true;
-              enable = mkDefault true;
-              flake = mkDefault "/etc/nixos";
-              rebootWindow = mkDefault {
-                lower = "01:00";
-                upper = "05:00";
+            system = {
+              autoUpgrade = {
+                allowReboot = mkDefault true;
+                enable = mkDefault true;
+                flake = mkDefault "/etc/nixos";
+                rebootWindow = mkDefault {
+                  lower = "01:00";
+                  upper = "05:00";
+                };
+                runGarbageCollection = mkDefault true;
               };
-              runGarbageCollection = mkDefault true;
               stateVersion = cfg.stateVersion;
             };
+
+            time.timeZone = cfg.timeZone;
 
             users.users = {
               ${cfg.username} = {
