@@ -348,8 +348,8 @@
               openssh = {
                 enable = true;
                 settings = {
-                  PermitRootLogin = "yes";
-                  PasswordAuthentication = true;
+                  PermitRootLogin = "prohibit-password";
+                  PasswordAuthentication = false;
                 };
               };
 
