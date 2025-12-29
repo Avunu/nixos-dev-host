@@ -226,6 +226,9 @@
             };
 
             environment = {
+              sessionVariables = {
+                NIXPKGS_ALLOW_UNFREE = "1";
+              };
               systemPackages =
                 with pkgs;
                 lib.flatten [
@@ -297,6 +300,15 @@
             };
 
             programs = {
+              direnv = {
+                enable = true;
+                angrr = {
+                  autoUse = true;
+                  enable = true;
+                };
+                nix-direnv.enable = true;
+                enableBashIntegration = true;
+              };
               git = {
                 enable = true;
                 config.safe.directory = [ "/home/${cfg.username}/" ];
@@ -346,6 +358,8 @@
               samba = {
                 enable = mkDefault true;
                 openFirewall = mkDefault true;
+                enableNmbd = mkDefault true;
+                enableWinbindd = mkDefault false;
                 settings = {
                   global = {
                     "workgroup" = mkDefault "WORKGROUP";
@@ -355,7 +369,9 @@
                     "hosts allow" = mkDefault "192.168.0.0/16 172.16.0.0/12 10.0.0.0/8 localhost";
                     "hosts deny" = mkDefault "0.0.0.0/0";
                     "guest account" = "nobody";
-                    "map to guest" = "bad user";
+                    "map to guest" = "never";
+                    "passdb backend" = "tdbsam";
+                    "encrypt passwords" = "yes";
                   };
                   homes = {
                     "comment" = "Home Directories";
