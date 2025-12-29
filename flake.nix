@@ -213,18 +213,6 @@
 
             i18n.defaultLocale = cfg.locale;
 
-            users.users = {
-              ${cfg.username} = {
-                extraGroups = [ "wheel" ];
-                initialPassword = cfg.initialPassword;
-                isNormalUser = true;
-                openssh.authorizedKeys.keys = cfg.sshKeys;
-              };
-              root = {
-                openssh.authorizedKeys.keys = cfg.sshKeys;
-              };
-            };
-
             environment = {
               sessionVariables = {
                 NIXPKGS_ALLOW_UNFREE = "1";
@@ -434,11 +422,21 @@
                 upper = "05:00";
               };
               runGarbageCollection = mkDefault true;
+              stateVersion = cfg.stateVersion;
             };
 
-            system.stateVersion = cfg.stateVersion;
-
-            users.defaultUserShell = pkgs.bashInteractive;
+            users.users = {
+              ${cfg.username} = {
+                extraGroups = [ "wheel" ];
+                initialPassword = cfg.initialPassword;
+                isNormalUser = true;
+                openssh.authorizedKeys.keys = cfg.sshKeys;
+              };
+              defaultUserShell = pkgs.bashInteractive;
+              root = {
+                openssh.authorizedKeys.keys = cfg.sshKeys;
+              };
+            };
 
             virtualisation = {
               containers.storage.settings = {
