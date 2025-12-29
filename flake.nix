@@ -358,8 +358,12 @@
               samba = {
                 enable = mkDefault true;
                 openFirewall = mkDefault true;
-                enableNmbd = mkDefault true;
-                enableWinbindd = mkDefault false;
+                nmbd = {
+                  enable = mkDefault true;
+                };
+                winbindd = {
+                  enable = mkDefault false;
+                };
                 settings = {
                   global = {
                     "workgroup" = mkDefault "WORKGROUP";
