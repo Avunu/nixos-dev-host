@@ -244,6 +244,7 @@
                     nodejs_24
                     podman-compose
                     podman-tui
+                    service-wrapper
                     tzdata
                     wget
                   ]
