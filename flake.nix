@@ -238,7 +238,7 @@
                     git
                     gnumake
                     nano
-                    nixfmt-rfc-style
+                    nixfmt
                     nixos-container
                     nixpkgs-fmt
                     nodejs_24
@@ -408,6 +408,14 @@
                   host
                 ];
                 requiredBy = [ "nixos-upgrade.service" ];
+              };
+              timers.flake-update = {
+                wantedBy = [ "timers.target" ];
+                timerConfig = {
+                  OnCalendar = "hourly";
+                  Persistent = true;
+                  Unit = "flake-update.service";
+                };
               };
             };
 
