@@ -13,10 +13,9 @@
   };
 
   outputs =
-    {
+    inputs@{
       self,
       nixpkgs,
-      disko,
       ...
     }:
     let
@@ -36,7 +35,7 @@
         in
         {
           imports = [
-            disko.nixosModules.disko
+            inputs.disko.nixosModules.disko
           ];
 
           options.devHost = {
