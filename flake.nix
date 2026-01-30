@@ -187,6 +187,10 @@
               useDHCP = mkDefault false;
               dhcpcd.enable = mkDefault false;
               useNetworkd = mkDefault false;
+              firewall.allowedTCPPorts = [
+                8443  # Kanidm HTTPS
+                636   # Kanidm LDAP
+              ];
             };
 
             systemd.network = {
@@ -342,7 +346,9 @@
                 enable = true;
                 settings = {
                   PermitRootLogin = "prohibit-password";
-                  PasswordAuthentication = false;
+                  # Enable password auth via Kanidm PAM
+                  PasswordAuthentication = true;
+                  UsePAM = true;
                 };
               };
 
@@ -351,24 +357,24 @@
               samba = {
                 enable = mkDefault true;
                 openFirewall = mkDefault true;
-                nmbd = {
-                  enable = mkDefault true;
-                };
-                winbindd = {
-                  enable = mkDefault false;
-                };
+                nmbd.enable = mkDefault true;
+                winbindd.enable = mkDefault false;
                 settings = {
                   global = {
                     "workgroup" = mkDefault "WORKGROUP";
                     "server string" = mkDefault "NixOS Dev Host - ${cfg.hostName}";
                     "netbios name" = mkDefault cfg.hostName;
-                    "security" = "user";
                     "hosts allow" = mkDefault "192.168.0.0/16 172.16.0.0/12 10.0.0.0/8 localhost";
                     "hosts deny" = mkDefault "0.0.0.0/0";
-                    "guest account" = "nobody";
                     "map to guest" = "never";
-                    "passdb backend" = "tdbsam";
-                    "encrypt passwords" = "yes";
+                    # Use Kanidm LDAP for authentication
+                    "passdb backend" = "ldapsam:ldaps://localhost:636";
+                    "ldap admin dn" = "dn=idm_admin,o=localhost";
+                    "ldap suffix" = "o=localhost";
+                    "ldap user suffix" = "ou=people";
+                    "ldap group suffix" = "ou=groups";
+                    "ldap ssl" = "start tls";
+                    "ldap passwd sync" = "yes";
                   };
                   homes = {
                     "comment" = "Home Directories";
@@ -386,6 +392,46 @@
                 openFirewall = mkDefault true;
               };
 
+              # Kanidm identity management (localhost)
+              kanidm = {
+                enableServer = true;
+                enableClient = true;
+                enablePam = true;
+                serverSettings = {
+                  origin = "https://localhost:8443";
+                  domain = "localhost";
+                  bindaddress = "[::]:8443";
+                  ldapbindaddress = "[::]:636";
+                  tls_chain = "/var/lib/kanidm/certs/cert.pem";
+                  tls_key = "/var/lib/kanidm/certs/key.pem";
+                  online_backup = {
+                    path = "/var/lib/kanidm/backups";
+                    versions = 7;
+                    schedule = "0 3 * * *";
+                  };
+                };
+                clientSettings = {
+                  uri = "https://localhost:8443";
+                  verify_ca = false;
+                  verify_hostnames = false;
+                };
+                unixSettings = {
+                  kanidm = {
+                    pam_allowed_login_groups = [ "linux_users" ];
+                  };
+                };
+                provision = {
+                  enable = true;
+                  acceptInvalidCerts = true;
+                  groups.linux_users = { };
+                  groups.samba_users = { };
+                  persons.${cfg.username} = {
+                    displayName = cfg.username;
+                    groups = [ "linux_users" "samba_users" ];
+                  };
+                };
+              };
+
               udisks2.enable = true;
 
               upower.enable = mkDefault true;
@@ -393,6 +439,31 @@
             };
 
             systemd = {
+              # Generate self-signed TLS certificates for Kanidm
+              services.kanidm-cert-init = {
+                description = "Generate self-signed TLS certificates for Kanidm";
+                wantedBy = [ "kanidm.service" ];
+                before = [ "kanidm.service" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  RemainAfterExit = true;
+                };
+                script = ''
+                  CERT_DIR="/var/lib/kanidm/certs"
+                  if [ ! -f "$CERT_DIR/cert.pem" ] || [ ! -f "$CERT_DIR/key.pem" ]; then
+                    mkdir -p "$CERT_DIR"
+                    ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:4096 \
+                      -keyout "$CERT_DIR/key.pem" \
+                      -out "$CERT_DIR/cert.pem" \
+                      -sha256 -days 3650 -nodes \
+                      -subj "/CN=localhost" \
+                      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
+                    chown -R kanidm:kanidm "$CERT_DIR"
+                    chmod 600 "$CERT_DIR/key.pem"
+                    chmod 644 "$CERT_DIR/cert.pem"
+                  fi
+                '';
+              };
               services.flake-update = {
                 unitConfig = {
                   Description = "Update flake inputs";
