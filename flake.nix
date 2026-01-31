@@ -356,6 +356,7 @@
 
               samba = {
                 enable = mkDefault true;
+                package = pkgs.samba4Full;  # Includes LDAP support
                 openFirewall = mkDefault true;
                 nmbd.enable = mkDefault true;
                 winbindd.enable = mkDefault false;
