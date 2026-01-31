@@ -187,10 +187,6 @@
               useDHCP = mkDefault false;
               dhcpcd.enable = mkDefault false;
               useNetworkd = mkDefault false;
-              firewall.allowedTCPPorts = [
-                8443  # Kanidm HTTPS
-                636   # Kanidm LDAP
-              ];
             };
 
             systemd.network = {
@@ -346,9 +342,7 @@
                 enable = true;
                 settings = {
                   PermitRootLogin = "prohibit-password";
-                  # Enable password auth via Kanidm PAM
-                  PasswordAuthentication = true;
-                  UsePAM = true;
+                  PasswordAuthentication = false;
                 };
               };
 
@@ -356,7 +350,7 @@
 
               samba = {
                 enable = mkDefault true;
-                package = pkgs.samba4Full;  # Includes LDAP support
+                package = pkgs.samba4Full;
                 openFirewall = mkDefault true;
                 nmbd.enable = mkDefault true;
                 winbindd.enable = mkDefault false;
@@ -368,14 +362,6 @@
                     "hosts allow" = mkDefault "192.168.0.0/16 172.16.0.0/12 10.0.0.0/8 localhost";
                     "hosts deny" = mkDefault "0.0.0.0/0";
                     "map to guest" = "never";
-                    # Use Kanidm LDAP for authentication
-                    "passdb backend" = "ldapsam:ldaps://localhost:636";
-                    "ldap admin dn" = "dn=idm_admin,o=localhost";
-                    "ldap suffix" = "o=localhost";
-                    "ldap user suffix" = "ou=people";
-                    "ldap group suffix" = "ou=groups";
-                    "ldap ssl" = "start tls";
-                    "ldap passwd sync" = "yes";
                   };
                   homes = {
                     "comment" = "Home Directories";
@@ -393,49 +379,6 @@
                 openFirewall = mkDefault true;
               };
 
-              # Kanidm identity management (localhost)
-              kanidm = {
-                enableServer = true;
-                enableClient = true;
-                enablePam = true;
-                package = pkgs.kanidm_1_8.withSecretProvisioning;
-                serverSettings = {
-                  origin = "https://localhost:8443";
-                  domain = "localhost";
-                  bindaddress = "[::]:8443";
-                  ldapbindaddress = "[::]:636";
-                  tls_chain = "/var/lib/kanidm/certs/cert.pem";
-                  tls_key = "/var/lib/kanidm/certs/key.pem";
-                  online_backup = {
-                    path = "/var/lib/kanidm/backups";
-                    versions = 7;
-                    schedule = "0 3 * * *";
-                  };
-                };
-                clientSettings = {
-                  uri = "https://localhost:8443";
-                  verify_ca = false;
-                  verify_hostnames = false;
-                };
-                unixSettings = {
-                  kanidm = {
-                    pam_allowed_login_groups = [ "linux_users" ];
-                  };
-                };
-                provision = {
-                  enable = true;
-                  acceptInvalidCerts = true;
-                  idmAdminPasswordFile = "/var/lib/kanidm/secrets/idm_admin_password";
-                  adminPasswordFile = "/var/lib/kanidm/secrets/admin_password";
-                  groups.linux_users = { };
-                  groups.samba_users = { };
-                  persons.${cfg.username} = {
-                    displayName = cfg.username;
-                    groups = [ "linux_users" "samba_users" ];
-                  };
-                };
-              };
-
               udisks2.enable = true;
 
               upower.enable = mkDefault true;
@@ -443,42 +386,22 @@
             };
 
             systemd = {
-              # Generate self-signed TLS certificates and admin passwords for Kanidm
-              services.kanidm-init = {
-                description = "Initialize Kanidm certificates and secrets";
-                wantedBy = [ "kanidm.service" ];
-                before = [ "kanidm.service" ];
+              # Setup Samba user with initial password (runs once)
+              services.samba-user-setup = {
+                description = "Setup Samba user with initial password";
+                after = [ "samba-smbd.service" ];
+                wantedBy = [ "multi-user.target" ];
                 serviceConfig = {
                   Type = "oneshot";
                   RemainAfterExit = true;
                 };
                 script = ''
-                  # Certificates
-                  CERT_DIR="/var/lib/kanidm/certs"
-                  if [ ! -f "$CERT_DIR/cert.pem" ] || [ ! -f "$CERT_DIR/key.pem" ]; then
-                    mkdir -p "$CERT_DIR"
-                    ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:4096 \
-                      -keyout "$CERT_DIR/key.pem" \
-                      -out "$CERT_DIR/cert.pem" \
-                      -sha256 -days 3650 -nodes \
-                      -subj "/CN=localhost" \
-                      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
-                    chown -R kanidm:kanidm "$CERT_DIR"
-                    chmod 600 "$CERT_DIR/key.pem"
-                    chmod 644 "$CERT_DIR/cert.pem"
+                  # Add user to Samba if not exists
+                  if ! ${pkgs.samba4Full}/bin/pdbedit -L 2>/dev/null | grep -q "^${cfg.username}:"; then
+                    printf '%s\n%s\n' '${cfg.initialPassword}' '${cfg.initialPassword}' | \
+                      ${pkgs.samba4Full}/bin/smbpasswd -s -a ${cfg.username}
+                    echo "Samba user ${cfg.username} created with initial password"
                   fi
-
-                  # Admin passwords (only created once)
-                  SECRET_DIR="/var/lib/kanidm/secrets"
-                  mkdir -p "$SECRET_DIR"
-                  if [ ! -f "$SECRET_DIR/idm_admin_password" ]; then
-                    ${pkgs.openssl}/bin/openssl rand -base64 24 > "$SECRET_DIR/idm_admin_password"
-                  fi
-                  if [ ! -f "$SECRET_DIR/admin_password" ]; then
-                    ${pkgs.openssl}/bin/openssl rand -base64 24 > "$SECRET_DIR/admin_password"
-                  fi
-                  chown -R kanidm:kanidm "$SECRET_DIR"
-                  chmod 600 "$SECRET_DIR"/*
                 '';
               };
               services.flake-update = {
