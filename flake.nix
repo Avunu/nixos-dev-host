@@ -398,7 +398,7 @@
                 enableServer = true;
                 enableClient = true;
                 enablePam = true;
-                package = pkgs.kanidm_1_8;
+                package = pkgs.kanidm.withSecretProvisioning;
                 serverSettings = {
                   origin = "https://localhost:8443";
                   domain = "localhost";
@@ -425,6 +425,8 @@
                 provision = {
                   enable = true;
                   acceptInvalidCerts = true;
+                  idmAdminPasswordFile = "/var/lib/kanidm/secrets/idm_admin_password";
+                  adminPasswordFile = "/var/lib/kanidm/secrets/admin_password";
                   groups.linux_users = { };
                   groups.samba_users = { };
                   persons.${cfg.username} = {
@@ -441,9 +443,9 @@
             };
 
             systemd = {
-              # Generate self-signed TLS certificates for Kanidm
-              services.kanidm-cert-init = {
-                description = "Generate self-signed TLS certificates for Kanidm";
+              # Generate self-signed TLS certificates and admin passwords for Kanidm
+              services.kanidm-init = {
+                description = "Initialize Kanidm certificates and secrets";
                 wantedBy = [ "kanidm.service" ];
                 before = [ "kanidm.service" ];
                 serviceConfig = {
@@ -451,6 +453,7 @@
                   RemainAfterExit = true;
                 };
                 script = ''
+                  # Certificates
                   CERT_DIR="/var/lib/kanidm/certs"
                   if [ ! -f "$CERT_DIR/cert.pem" ] || [ ! -f "$CERT_DIR/key.pem" ]; then
                     mkdir -p "$CERT_DIR"
@@ -464,6 +467,18 @@
                     chmod 600 "$CERT_DIR/key.pem"
                     chmod 644 "$CERT_DIR/cert.pem"
                   fi
+
+                  # Admin passwords (only created once)
+                  SECRET_DIR="/var/lib/kanidm/secrets"
+                  mkdir -p "$SECRET_DIR"
+                  if [ ! -f "$SECRET_DIR/idm_admin_password" ]; then
+                    ${pkgs.openssl}/bin/openssl rand -base64 24 > "$SECRET_DIR/idm_admin_password"
+                  fi
+                  if [ ! -f "$SECRET_DIR/admin_password" ]; then
+                    ${pkgs.openssl}/bin/openssl rand -base64 24 > "$SECRET_DIR/admin_password"
+                  fi
+                  chown -R kanidm:kanidm "$SECRET_DIR"
+                  chmod 600 "$SECRET_DIR"/*
                 '';
               };
               services.flake-update = {
