@@ -397,6 +397,7 @@
                 enableServer = true;
                 enableClient = true;
                 enablePam = true;
+                package = pkgs.kanidm_1_8;
                 serverSettings = {
                   origin = "https://localhost:8443";
                   domain = "localhost";
