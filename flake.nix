@@ -343,11 +343,11 @@
               power-profiles-daemon.enable = mkDefault true;
 
               samba = {
-                enable = mkDefault true;
-                # package = pkgs.samba4Full;
+                enable = mkDefault false;
+                package = pkgs.samba4Full;
                 openFirewall = mkDefault true;
-                nmbd.enable = mkDefault false;
-                winbindd.enable = mkDefault false;
+                # nmbd.enable = mkDefault true;
+                # winbindd.enable = mkDefault false;
                 settings = {
                   global = {
                     "workgroup" = mkDefault "WORKGROUP";
