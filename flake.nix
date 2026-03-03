@@ -346,7 +346,7 @@
                 enable = mkDefault true;
                 package = pkgs.samba4Full;
                 openFirewall = mkDefault true;
-                nmbd.enable = mkDefault true;
+                nmbd.enable = mkDefault false;
                 winbindd.enable = mkDefault false;
                 settings = {
                   global = {
