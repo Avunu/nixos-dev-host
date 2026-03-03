@@ -7,9 +7,6 @@
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    flox = {
-      url = "github:flox/flox";
-    };
   };
 
   outputs =
@@ -250,7 +247,6 @@
                     tzdata
                     wget
                   ]
-                  inputs.flox.packages.${system}.flox
                   cfg.extraPackages
                 ];
             };
@@ -270,12 +266,10 @@
                 substituters = [
                   "https://cache.nixos.org?priority=40"
                   "https://nix-community.cachix.org?priority=41"
-                  "https://cache.flox.dev?priority=42"
                 ];
                 trusted-public-keys = [
                   "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
                   "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
-                  "flox-cache-public-1:7F4OyH7ZCnFhcze3fJdfyXYLQw/aV7GEed86nQ7IsOs="
                 ];
                 trusted-users = [
                   "root"
