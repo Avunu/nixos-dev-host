@@ -368,10 +368,10 @@
                 };
               };
 
-              samba-wsdd = {
-                enable = mkDefault true;
-                openFirewall = mkDefault true;
-              };
+              # samba-wsdd = {
+              #   enable = mkDefault true;
+              #   openFirewall = mkDefault true;
+              # };
 
               udisks2.enable = true;
 
@@ -381,23 +381,23 @@
 
             systemd = {
               # Setup Samba user with initial password (runs once)
-              services.samba-user-setup = {
-                description = "Setup Samba user with initial password";
-                after = [ "samba-smbd.service" ];
-                wantedBy = [ "multi-user.target" ];
-                serviceConfig = {
-                  Type = "oneshot";
-                  RemainAfterExit = true;
-                };
-                script = ''
-                  # Add user to Samba if not exists
-                  if ! ${pkgs.samba4Full}/bin/pdbedit -L 2>/dev/null | grep -q "^${cfg.username}:"; then
-                    printf '%s\n%s\n' '${cfg.initialPassword}' '${cfg.initialPassword}' | \
-                      ${pkgs.samba4Full}/bin/smbpasswd -s -a ${cfg.username}
-                    echo "Samba user ${cfg.username} created with initial password"
-                  fi
-                '';
-              };
+              # services.samba-user-setup = {
+              #   description = "Setup Samba user with initial password";
+              #   after = [ "samba-smbd.service" ];
+              #   wantedBy = [ "multi-user.target" ];
+              #   serviceConfig = {
+              #     Type = "oneshot";
+              #     RemainAfterExit = true;
+              #   };
+              #   script = ''
+              #     # Add user to Samba if not exists
+              #     if ! ${pkgs.samba4Full}/bin/pdbedit -L 2>/dev/null | grep -q "^${cfg.username}:"; then
+              #       printf '%s\n%s\n' '${cfg.initialPassword}' '${cfg.initialPassword}' | \
+              #         ${pkgs.samba4Full}/bin/smbpasswd -s -a ${cfg.username}
+              #       echo "Samba user ${cfg.username} created with initial password"
+              #     fi
+              #   '';
+              # };
               services.flake-update = {
                 unitConfig = {
                   Description = "Update flake inputs";
