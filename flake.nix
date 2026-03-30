@@ -247,6 +247,9 @@
                     tzdata
                     wget
                   ]
+                  (writeShellScriptBin "system-upgrade" ''
+                    sudo sh -c 'cd /etc/nixos && nix flake update && nixos-rebuild switch --impure'
+                  '')
                   cfg.extraPackages
                 ];
             };
