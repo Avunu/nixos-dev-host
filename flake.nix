@@ -189,10 +189,9 @@
             systemd.network = {
               enable = mkDefault true;
               networks."10-wan" = {
-                matchConfig.Name = mkDefault [
-                  "en*"
-                  "eth*"
-                ];
+                # [Match] Name= is a single whitespace-separated glob list, not
+                # repeated keys; a Nix list would render as multiple Name= lines.
+                matchConfig.Name = mkDefault "en* eth*";
                 networkConfig = {
                   DHCP = mkDefault "yes";
                   IPv6AcceptRA = mkDefault true;
@@ -201,7 +200,13 @@
                   RouteMetric = mkDefault 1024;
                   UseDNS = mkDefault true;
                 };
+                # [DHCPv6] has no RouteMetric= key (it never has); the IPv6
+                # default route here is learned via Router Advertisement, so its
+                # metric is set in [IPv6AcceptRA] below.
                 dhcpV6Config = {
+                  UseDNS = mkDefault true;
+                };
+                ipv6AcceptRAConfig = {
                   RouteMetric = mkDefault 1024;
                   UseDNS = mkDefault true;
                 };
