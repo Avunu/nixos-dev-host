@@ -24,7 +24,15 @@
         "${hostName}" = nixpkgs.lib.nixosSystem {
           system = system;
           modules = [
-            { nix.nixPath = [ "nixpkgs=${self.inputs.nixpkgs}" ]; }
+            # No nix.nixPath pin here. It used to read
+            #   nix.nixPath = [ "nixpkgs=${self.inputs.nixpkgs}" ];
+            # which puts the whole nixpkgs source tree — 210 MB — into the
+            # system closure so that <nixpkgs> resolves offline. The module
+            # drops the equivalent flake-provided pins for the same reason and
+            # replaces them with a github registry entry at the same revision,
+            # so `nix shell nixpkgs#foo` still resolves to exactly what this
+            # system was built from. Restoring this line would put the 210 MB
+            # straight back. See modules/nix.nix.
             nixos-dev-host.nixosModules.devHost
             {
               devHost = {
