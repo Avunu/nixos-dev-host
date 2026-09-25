@@ -7,7 +7,14 @@ with lib;
   options.devHost = {
     hostName = mkOption {
       type = types.str;
-      description = "Hostname for the system.";
+      default = "nix-dev-host";
+      description = ''
+        Hostname for the system.
+
+        The default is a placeholder that lets the generic guided ISO exist
+        (it bakes the module with no settings at all); a guided install asks
+        for the real one on the box.
+      '';
     };
 
     diskDevice = mkOption {
@@ -67,7 +74,13 @@ with lib;
 
     username = mkOption {
       type = types.str;
-      description = "Primary user name.";
+      default = "dev";
+      description = ''
+        Primary user name.
+
+        A placeholder default, for the same reason as hostName; a guided
+        install asks for it.
+      '';
     };
 
     initialPassword = mkOption {
@@ -100,14 +113,49 @@ with lib;
       description = "Additional packages to install system-wide.";
     };
 
+    upgradeFlake = mkOption {
+      type = types.str;
+      default = "/etc/nixos";
+      example = "github:Owner/host-repo#my-host";
+      description = ''
+        The flake `system-upgrade` (and its timer) rebuilds from.
+
+        A local path — the default — is a flake living on the machine: its
+        inputs are updated in place, and it is rebuilt only if the lock moved.
+
+        Anything else is a remote flake reference, and the repository's own
+        flake.lock is authoritative: the machine never updates a lock of its
+        own, and rebuilds when the repository's revision differs from the one
+        it is running (`nixos-version --configuration-revision`).
+        lib.mkHost sets this for a host installed with `deployedConfiguration`.
+      '';
+    };
+
+    githubTokenFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = literalExpression "config.age.secrets.github-token.path";
+      description = ''
+        A file, present at runtime, holding the nix.conf line
+        `access-tokens = github.com=<token>` — typically an agenix secret.
+
+        nix `!include`s it, for private `github:` inputs. git gets the same
+        token through a credential helper, for private clones and for
+        `git+https://` inputs, which nix fetches by running git. It is only
+        ever read at runtime, so the token stays out of the store; a user who
+        cannot read the file gets neither, silently.
+      '';
+    };
+
     features = {
       autoUpgrade = mkOption {
         type = types.bool;
         default = true;
         description = ''
-          The daily upgrade timer: refresh the flake inputs and, only if the
-          lock actually moved, `nixos-rebuild switch`. The manual
-          `system-upgrade` command works either way.
+          The daily upgrade timer: rebuild from upgradeFlake, only when
+          something actually moved — the local flake's lock, or the remote
+          repository's revision. The manual `system-upgrade` command works
+          either way.
 
           Daily rather than hourly, and it does not reboot. Both are risk
           decisions rather than resource ones. This host tracks
@@ -170,9 +218,10 @@ with lib;
           Avahi: mDNS resolution and publishing.
 
           On, and publishing is on with it, which is the opposite of what a
-          laptop should do. It is load-bearing here: local/deploy.sh and
-          local/update.sh both reach this machine as `<hostname>.local`, so
-          turning publishing off breaks the deployment path.
+          laptop should do. It is load-bearing here: the usual way to reach a
+          freshly installed box — for `nix run .#deploy`, a
+          `nixos-rebuild --target-host`, or plain ssh — is as
+          `<hostname>.local`, so turning publishing off breaks that path.
         '';
       };
 

@@ -1,2 +1,4 @@
 result
-local/flake.lock
+.direnv
+# per-host answers written by `nix run .#configure`; never committed
+installer/
