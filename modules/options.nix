@@ -22,22 +22,34 @@ with lib;
 
     swapSizeGiB = mkOption {
       type = types.int;
-      default = 8;
+      default = 96;
       description = ''
         Size of the swap partition, in GiB. 0 omits the partition entirely.
 
         This is install-time: it shapes the disko table and changing it does
         not repartition a machine that is already running. An existing host
-        that needs swap wants a swapfile instead — on btrfs that means
+        that needs more swap wants a swapfile instead — on btrfs that means
         nodatacow and no compression, so it is a manual job rather than
         something this option can do.
 
-        Why a disk swap at all on a box that has zram: zram is a compressed
-        tier inside RAM, not extra memory. When it fills there is nowhere
-        left to go, and the failure mode on a build host is a linker being
-        OOM-killed at the end of a long compile. The disk partition is the
-        floor under that. zramSwap.priority (storage.nix) keeps compressed
-        RAM ahead of it, so this is only reached under real pressure.
+        zswap sits in front of it (see the `zswap.*` kernel params in
+        storage.nix, active whenever this is above 0), compressing pages
+        into a RAM-resident pool before the kernel ever touches the disk.
+        Without a backing device zswap has nowhere to spill once that pool
+        fills, so this option is also what makes zswap itself functional,
+        not just what sits behind it.
+
+        96 GiB, not the 8 GiB a thin last-resort tier would use: this is a
+        build host, where the failure mode is a linker or a large parallel
+        compile getting OOM-killed at the end of an hour-long job, and a
+        pool that fills early costs far more than the disk space does. It
+        also covers hibernation — which needs a resume device at least as
+        large as RAM — on the RAM sizes this module targets. Size it
+        against the machine in front of you regardless: less is reasonable
+        on a smaller disk where the space is worth more than a tier that is
+        only reached under real pressure. At 0 there is no swap partition,
+        no `boot.resumeDevice`, no hibernation, and zswap has nothing to
+        compress into — no swap at all.
       '';
     };
 

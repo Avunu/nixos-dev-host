@@ -142,27 +142,32 @@ in
     ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none"
   '';
 
-  # ── zram ────────────────────────────────────────────────────
-  zramSwap = {
-    enable = mkDefault true;
-
-    # zstd, not the lz4 a small-CPU desktop would pick. For swap the number
-    # that matters is how long a fault takes to come back, and lz4
-    # decompresses several times faster — but that argument is about keeping
-    # a pointer moving on a 2012 dual core. There is no pointer here, the
-    # cores are not scarce, and the better ratio means more anonymous memory
-    # fits before anything reaches the disk partition.
-    algorithm = mkDefault "zstd";
-
-    # Explicit because the ordering carries weight: zram has to outrank the
-    # disk swap partition disko creates (which lands at priority -1), or the
-    # kernel will page out to the disk while compressed RAM sits unused. The
-    # NixOS default of 5 already does that; 100 says it on purpose.
-    priority = mkDefault 100;
-
-    # A capacity, not an allocation: the figure is how much *uncompressed*
-    # anonymous memory the device will accept, and the real RAM it occupies
-    # is that divided by the compression ratio, only as it fills.
-    memoryPercent = mkDefault 50;
-  };
+  # ── zswap ───────────────────────────────────────────────────
+  # No native NixOS module for this, so it's plain kernel command line. A
+  # RAM-resident compressed pool in front of the swap partition above: pages
+  # get compressed into it first and only spill to the partition once the
+  # pool is full, so the partition is reached under real pressure rather
+  # than on every swap-out. Gated on the same condition as the partition
+  # itself — with no backing device, zswap has nothing to spill into once
+  # its pool fills, which just moves the OOM kill earlier.
+  #
+  # zstd, not the lz4 a CPU-constrained desktop would pick. For swap the
+  # number that matters is how long a fault takes to come back, and lz4
+  # decompresses several times faster — but that argument is about a
+  # scarce core. There is no scarce core here: this is the machine whose
+  # job is compiling, cores are the resource it has plenty of, and the
+  # better ratio means more anonymous memory fits in the RAM-resident pool
+  # before anything reaches the disk partition — the same trade the old
+  # zram tier made, kept across the move to zswap.
+  #
+  # zsmalloc is the only allocator left as of 6.10 (z3fold and zbud were
+  # both removed) — named explicitly rather than left to whatever the
+  # kernel still defaults to.
+  boot.kernelParams = mkIf (cfg.swapSizeGiB > 0) [
+    "zswap.enabled=1"
+    "zswap.compressor=zstd"
+    "zswap.zpool=zsmalloc"
+    "zswap.max_pool_percent=20"
+    "zswap.shrinker_enabled=1"
+  ];
 }

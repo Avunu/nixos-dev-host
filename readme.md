@@ -14,7 +14,7 @@ build alone and protects the SSH session you would need in order to stop it.
 
 |  |  |
 | --- | --- |
-| Storage | btrfs root with forced zstd compression, a swap partition under zram, disko-declared |
+| Storage | btrfs root with forced zstd compression, a swap partition with zswap in front of it, disko-declared |
 | Boot | systemd-boot, systemd initrd, quiet, 10 generations |
 | Containers | podman with Docker compatibility (CLI alias and socket), btrfs storage driver |
 | Networking | systemd-networkd, Avahi publishing `<hostname>.local`, sshd (keys only), optional Samba |
@@ -43,7 +43,7 @@ which carries the reasoning for each one.
 | username | string | required |
 | initialPassword | string | "password" — change it |
 | diskDevice | string | /dev/sda |
-| swapSizeGiB | int | 8 — 0 omits the partition. Install-time |
+| swapSizeGiB | int | 96 — 0 omits the partition. Install-time |
 | sshKeys | list of strings | [ ] |
 | timeZone / locale | string | America/New_York / en_US.UTF-8 |
 | stateVersion | string | "25.11" |
@@ -67,7 +67,7 @@ which carries the reasoning for each one.
 | --- | --- |
 | modules/options.nix | every devHost.* option |
 | modules/boot.nix | kernel, command line, sysctls, bootloader |
-| modules/storage.nix | disko table, btrfs profile, swap, zram, block layer |
+| modules/storage.nix | disko table, btrfs profile, swap, zswap, block layer |
 | modules/nix.nix | nix settings, the build resource guards, the upgrade timer |
 | modules/networking.nix | networkd, Avahi, ssh, firewall, Samba |
 | modules/services.nix | the remaining daemons |

@@ -32,17 +32,17 @@ in
     # that the cap evicts in useful increments instead of dropping one huge
     # file at a time.
     #
-    # Two mechanics worth knowing before editing this. extraConfig is
-    # types.lines, which CONCATENATES definitions rather than letting one
-    # win — a second block elsewhere would leave both key sets in the file
-    # and make the result depend on which systemd read last. And Storage= and
-    # the rate limits have their own NixOS options because NixOS writes those
-    # into journald.conf *before* appending extraConfig, so setting them here
-    # would leave each key in the file twice.
-    journald.extraConfig = mkDefault ''
-      SystemMaxUse=512M
-      SystemMaxFileSize=64M
-    '';
+    # Two mechanics worth knowing before editing this. settings.Journal is an
+    # attrset, which lets one definition win via normal NixOS priority rather
+    # than concatenating — unlike the extraConfig string this replaced, where
+    # a second block elsewhere would have left both key sets in the file. And
+    # Storage= and the rate limits have their own NixOS options entirely, so
+    # setting them here would create a duplicate key rather than override
+    # anything.
+    journald.settings.Journal = {
+      SystemMaxUse = mkDefault "512M";
+      SystemMaxFileSize = mkDefault "64M";
+    };
 
     # ── Off ───────────────────────────────────────────────────
     # An hourly timer, on a machine with very little else periodic about it,

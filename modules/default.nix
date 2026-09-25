@@ -8,7 +8,7 @@
 #   options.nix     every devHost.* option, features.* included
 #   boot.nix        kernel, kernel command line, sysctls, bootloader
 #   storage.nix     the disko partition table, the btrfs profile, swap and
-#                   zram, and the block-layer tuning
+#                   zswap, and the block-layer tuning
 #   nix.nix         nix settings, the build resource guards, the upgrade
 #                   script and its timer
 #   networking.nix  systemd-networkd, avahi, ssh, the firewall

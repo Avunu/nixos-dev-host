@@ -231,9 +231,9 @@ in
   # No TMPDIR override for nix-daemon. The sibling desktop module moves build
   # scratch to /var/tmp because it puts /tmp on a tmpfs and then has to undo
   # the consequence — tmpfs pages are charged to the allocating cgroup, so
-  # build scratch counts against the memory ceiling and gets pushed into
-  # zram. boot.tmp.useTmpfs is left false here, so /tmp is already on the
-  # btrfs root and there is nothing to fix. Do not switch it on.
+  # build scratch counts against the memory ceiling and gets pushed into the
+  # zswap pool. boot.tmp.useTmpfs is left false here, so /tmp is already on
+  # the btrfs root and there is nothing to fix. Do not switch it on.
 
   # ── nixpkgs ─────────────────────────────────────────────────
   nixpkgs.config = {

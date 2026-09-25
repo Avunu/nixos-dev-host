@@ -95,18 +95,24 @@ with lib;
       "vm.dirty_background_ratio" = mkDefault 5;
 
       # ── Reclaim ────────────────────────────────────────────
-      # High swappiness on purpose. With zram present the cheap thing to
-      # evict is anonymous memory — it is compressed and stays in RAM —
-      # and the expensive thing is file-backed pages, which have to be read
-      # back off the disk. On a build host those file-backed pages are the
-      # Nix store and the compiler's own text, so refaulting them is the
-      # stall you actually feel.
+      # High swappiness on purpose. zswap (storage.nix) benefits from eager
+      # swapping: a page sent to swap lands in its RAM-resident compressed
+      # pool first, which is nearly as cheap as not swapping at all, and
+      # only spills to the disk swap partition once that pool fills. The
+      # alternative — reclaiming file-backed pages instead — is worse on a
+      # build host, because those file-backed pages are the Nix store and
+      # the compiler's own text, so refaulting them is the stall you
+      # actually feel. 100 favors swap over that kind of reclaim and avoids
+      # OOM before the zswap pool is exhausted.
       "vm.swappiness" = mkDefault 100;
 
-      # No swap-in readahead. Right for zram, which is the tier that is
-      # actually hot: reading one compressed page back is cheap and guessing
-      # at its neighbours is not.
-      "vm.page-cluster" = mkDefault 0;
+      # No vm.page-cluster override. That used to be pinned to 0 for zram,
+      # where every swap-in is a decompression and reading unrequested
+      # neighbours wastes CPU on pages nobody asked for. zswap keeps the
+      # same property for pages still in its pool, but once the pool spills
+      # to the disk partition below, an ordinary block device benefits from
+      # the kernel's own readahead again — so there is no single value that
+      # is right for both tiers, and the default is left alone.
 
       # kswapd wakes when free memory drops to 0.1% of the zone. A burst of
       # allocation — say, several compilers starting at once — overruns that
