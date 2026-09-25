@@ -11,7 +11,10 @@ let
 
   # The `system-upgrade` command the timer below runs. It is also on PATH for
   # manual runs — modules/packages.nix puts it in systemPackages.
-  systemUpgradeScript = import ../pkgs/system-upgrade.nix { inherit pkgs; };
+  systemUpgradeScript = import ../pkgs/system-upgrade.nix {
+    inherit pkgs;
+    flake = cfg.upgradeFlake;
+  };
 in
 {
   # ── The nixpkgs source is not worth 210 MB here ─────────────
@@ -253,7 +256,7 @@ in
   systemd.services.system-upgrade = mkIf cfg.features.autoUpgrade {
     restartIfChanged = false;
     unitConfig = {
-      Description = "Update flake inputs and switch NixOS configuration";
+      Description = "Upgrade NixOS from ${cfg.upgradeFlake}";
       StartLimitIntervalSec = 300;
       StartLimitBurst = 5;
     };

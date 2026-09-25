@@ -16,6 +16,8 @@
 #   containers.nix  podman and container storage
 #   packages.nix    what is installed, and the shell environment
 #   system.nix      console, locale, users, documentation
+#   secrets.nix     the agenix identity (/etc/agenix/key) and GitHub access
+#                   built on it
 #
 # ../pkgs holds the derivations more than one module needs: the upgrade
 # script (packages.nix installs it, nix.nix times it).
@@ -40,6 +42,7 @@
     ./services.nix
     ./storage.nix
     ./system.nix
+    (import ./secrets.nix { inherit (inputs) agenix; })
   ];
 
   # nix.nix needs the locked nixpkgs revision to pin the flake registry

@@ -48,7 +48,7 @@ in
     stateVersion = cfg.stateVersion;
     # Off deliberately. modules/nix.nix carries the upgrade mechanism — one
     # timer, lock-guarded, with resource limits and no unattended reboot —
-    # and this option would be a second one racing it on /etc/nixos.
+    # and this option would be a second one racing it.
     autoUpgrade.enable = mkDefault false;
   };
 

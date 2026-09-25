@@ -8,7 +8,10 @@ with lib;
 let
   cfg = config.devHost;
 
-  systemUpgradeScript = import ../pkgs/system-upgrade.nix { inherit pkgs; };
+  systemUpgradeScript = import ../pkgs/system-upgrade.nix {
+    inherit pkgs;
+    flake = cfg.upgradeFlake;
+  };
 in
 {
   environment.systemPackages =

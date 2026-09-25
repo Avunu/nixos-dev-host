@@ -1,7 +1,7 @@
 # Avunu NixOS Development Environment Host Configuration
 
-A headless development and build host, as a single NixOS module plus a
-deployment path.
+A headless development and build host, as a single NixOS module plus every
+way to (re)deploy it.
 
 The target is a bare-metal box on a LAN: no screen, no battery, nobody in
 front of it. People reach it over SSH, run containers on it, and build things
@@ -19,18 +19,76 @@ build alone and protects the SSH session you would need in order to stop it.
 | Containers | podman with Docker compatibility (CLI alias and socket), btrfs storage driver |
 | Networking | systemd-networkd, Avahi publishing `<hostname>.local`, sshd (keys only), optional Samba |
 | Toolchain | Python, Node, Bun, cmake, ccache, gh, direnv + nix-direnv, nix-ld |
-| Upgrades | one daily timer that only rebuilds when the flake lock actually moved |
+| Upgrades | one daily timer that only rebuilds when something actually moved — a local flake's lock, or the host repository's revision |
+| Secrets | agenix, decrypting with a pre-provisioned identity at `/etc/agenix/key` — not the SSH host key, so a redeploy never needs a re-key |
+| Deployment | [nixos-install-helper](https://github.com/Avunu/nixos-install-helper): nixos-anywhere, an unattended offline ISO, a guided ISO |
 
 ## Install and update
 
+From a checkout (the apps build `.`):
+
 ```sh
-cd local
-./deploy.sh <fqdn> <ip> <username>   # nixos-anywhere, first install
-./update.sh <fqdn>                   # nixos-rebuild --target-host
+nix run                             # wizard: settings, then network / unattended ISO / guided ISO
+nix run .#deploy -- root@<ip>       # nixos-anywhere onto a box booted into any Linux with SSH
+nix build --impure .#installerIso   # offline ISO that installs this exact host, unattended
+nix build .#guidedIso               # generic offline ISO: asks hostname, user, disk and key on the box
 ```
 
-On the machine itself, `system-upgrade` does a flake update and switches if
-the lock changed. It is also on a daily timer (`features.autoUpgrade`).
+Per-host answers (`nix run .#configure`) land in `installer/devHost-settings.json`,
+which is gitignored; the wizard and `deploy` read it by path. A host installed
+from here gets `/etc/nixos` as a small flake that imports `devHost` from this
+repository and reads those settings, plus a `local.nix` for anything else.
+
+On the machine itself, `system-upgrade` rebuilds from `devHost.upgradeFlake`
+when something moved, and a daily timer runs it (`features.autoUpgrade`).
+
+## Secrets
+
+agenix on a dev host decrypts with `/etc/agenix/key`, a key made for the host
+and carried into every install, rather than the SSH host key every install
+generates afresh. Secrets are encrypted to it (and to the operators) once.
+
+The key itself lives in the host's repository as `secrets/key.age`, encrypted to
+the operators only. Enter that repository's devShell (`direnv allow`, via
+`use flake`) and agenix-shell decrypts it into `$agenix__key`; `deploy`, the
+wizard and `installerIso` all pick it up from there and write it to
+`/etc/agenix/key` on the target. A missing key stops the install rather than
+producing a machine that cannot decrypt anything. agenix-shell tries
+`$AGENIX_IDENTITY`, then `~/.ssh/id_ed25519` and `~/.ssh/id_rsa` (hosts can
+override the list).
+
+`devHost.githubTokenFile` points at a secret holding the nix.conf line
+`access-tokens = github.com=<token>`. nix `!include`s it and git gets the same
+token through a credential helper — both at runtime, so the token never enters
+the store.
+
+## A specific machine
+
+A machine with its own repository calls `lib.mkHost` and gets all of the above:
+
+```nix
+{
+  inputs.nixos-dev-host.url = "github:Avunu/nixos-dev-host";
+  inputs.nixpkgs.follows = "nixos-dev-host/nixpkgs";
+
+  outputs = { self, nixpkgs, nixos-dev-host, ... }:
+    let
+      host = nixos-dev-host.lib.mkHost {
+        inherit self nixpkgs;
+        # The host rebuilds straight from its repository; nothing in /etc/nixos.
+        deployedConfiguration = "github:Owner/my-host#my-host";
+        agenixKeyFile = ./secrets/key.age;
+        modules = [ ./host.nix ];   # devHost.* values and anything else
+      };
+    in
+    { inherit (host) nixosModules nixosConfigurations packages apps devShells; };
+}
+```
+
+With `deployedConfiguration` the repository's `flake.lock` decides every
+version: `system-upgrade` rebuilds when the repository's revision differs from
+the running one, and never updates a lock of its own. Update the lock in the
+repository.
 
 ## Configuration
 
@@ -39,8 +97,8 @@ which carries the reasoning for each one.
 
 | Option | Type | Default |
 | --- | --- | --- |
-| hostName | string | required |
-| username | string | required |
+| hostName | string | "nix-dev-host" — a placeholder for the guided ISO |
+| username | string | "dev" — likewise |
 | initialPassword | string | "password" — change it |
 | diskDevice | string | /dev/sda |
 | swapSizeGiB | int | 96 — 0 omits the partition. Install-time |
@@ -48,6 +106,8 @@ which carries the reasoning for each one.
 | timeZone / locale | string | America/New_York / en_US.UTF-8 |
 | stateVersion | string | "25.11" |
 | extraPackages | list of packages | [ ] |
+| upgradeFlake | string | /etc/nixos — or a `github:` ref (set by `lib.mkHost`) |
+| githubTokenFile | string or null | null — runtime path of an `access-tokens` line |
 
 | features.* | Default |  |
 | --- | --- | --- |
@@ -55,7 +115,7 @@ which carries the reasoning for each one.
 | buildGuards | on | cgroup limits protecting sshd and containers from a build storm |
 | containers | on | podman + Docker compatibility |
 | firmwareUpdates | off | fwupd — a daemon and ~200 MB for something you do deliberately |
-| networkDiscovery | on | Avahi, **publishing** — the deploy scripts depend on it |
+| networkDiscovery | on | Avahi, **publishing** — reaching a new box as `<hostname>.local` depends on it |
 | networkTuning | on | bpftune |
 | sambaShares | off | home directories to the LAN; opens 139/445 |
 
@@ -74,10 +134,9 @@ which carries the reasoning for each one.
 | modules/containers.nix | podman and container storage |
 | modules/packages.nix | what is installed |
 | modules/system.nix | console, locale, users, documentation |
+| modules/secrets.nix | the agenix identity and GitHub access |
 | pkgs/ | the derivations more than one module needs |
-
-`local/` holds the per-host flake and the deploy scripts. It is not part of
-the root flake.
+| lib/mk-host.nix | `lib.mkHost`: a host flake's installers, devShell and configuration |
 
 ## Verifying a change
 
@@ -89,6 +148,7 @@ finds, so an option rename upstream arrives unattended.
 ```sh
 nix build .#checks.x86_64-linux.eval          # full eval, no system build
 nix build --dry-run .#nixosConfigurations.example.config.system.build.toplevel
+nix build .#checks.x86_64-linux.offline-install-guided   # slow: installs from the ISO in a VM
 nix fmt
 ```
 
