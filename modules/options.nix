@@ -147,6 +147,89 @@ with lib;
       '';
     };
 
+    flakeAutoUpdate = {
+      stateDirectory = mkOption {
+        type = types.str;
+        default = "/var/lib/flake-auto-update";
+        description = ''
+          Where the working clones live, one directory per repository under
+          it. Each clone belongs to its service and is reset to the remote on
+          every run, so local edits made here are discarded.
+        '';
+      };
+
+      repositories = mkOption {
+        type = types.attrsOf (
+          types.submodule {
+            options = {
+              url = mkOption {
+                type = types.str;
+                example = "https://github.com/Owner/host-repo.git";
+                description = "The repository to clone.";
+              };
+
+              branch = mkOption {
+                type = types.str;
+                default = "main";
+                description = ''
+                  The branch whose flake.lock is refreshed. Each run starts
+                  from this branch's remote head, so the lock is always
+                  re-locked against the latest commit.
+                '';
+              };
+
+              pushBranch = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = ''
+                  Where the refreshed lock is pushed. Null means back onto
+                  `branch`, which is the normal case, and it moves that branch
+                  for every node that pulls it.
+
+                  Anything else is a side branch, rebuilt from `branch` plus a
+                  single lock commit on every change, force-pushed with a
+                  lease so a human push to it is never silently overwritten.
+                  Nothing downstream applies a side branch until someone merges
+                  it.
+                '';
+              };
+
+              interval = mkOption {
+                type = types.str;
+                default = "10min";
+                description = ''
+                  How often this repository is refreshed, as a systemd time
+                  span. The first run is two minutes after boot.
+                '';
+              };
+            };
+          }
+        );
+        default = { };
+        example = literalExpression ''
+          {
+            my-host = { url = "https://github.com/Owner/my-host.git"; };
+          }
+        '';
+        description = ''
+          Repositories whose flake.lock this host keeps current, keyed by a
+          short name. Each one gets its own timer and service, named
+          flake-auto-update-<name>, so one failing repository does not hold up
+          the others.
+
+          Each run clones (if needed), runs `nix flake update`, and commits and
+          pushes the lock only if it moved. This is the lock only. A host that
+          rebuilds from a remote repository (upgradeFlake) picks the pushed
+          lock up on its own system-upgrade run, so the rebuild cadence is still
+          set by features.autoUpgrade.
+
+          Pushing needs write access. The push goes through the same GitHub
+          credential helper as the reads, so githubTokenFile has to be a token
+          that can write to every repository listed here.
+        '';
+      };
+    };
+
     features = {
       autoUpgrade = mkOption {
         type = types.bool;

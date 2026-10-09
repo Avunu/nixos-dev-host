@@ -11,6 +11,9 @@
 #                   zswap, and the block-layer tuning
 #   nix.nix         nix settings, the build resource guards, the upgrade
 #                   script and its timer
+#   flake-auto-update.nix
+#                   the timer that re-locks a repository's flake and pushes
+#                   the lock (devHost.flakeAutoUpdate, off by default)
 #   networking.nix  systemd-networkd, avahi, ssh, the firewall
 #   services.nix    the remaining daemons, each with a reason to be here
 #   containers.nix  podman and container storage
@@ -36,6 +39,7 @@
 
     ./boot.nix
     ./containers.nix
+    ./flake-auto-update.nix
     ./networking.nix
     ./nix.nix
     ./packages.nix
