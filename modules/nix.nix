@@ -14,6 +14,7 @@ let
   systemUpgradeScript = import ../pkgs/system-upgrade.nix {
     inherit pkgs;
     nix = config.nix.package;
+    nixos-rebuild = config.system.build.nixos-rebuild;
     flake = cfg.upgradeFlake;
   };
 in

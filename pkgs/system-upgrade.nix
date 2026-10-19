@@ -11,6 +11,14 @@
   # rebuild driven by the same Nix the daemon runs — Determinate Nix, not
   # whatever pkgs.nix happens to be.
   nix ? pkgs.nix,
+  # config.system.build.nixos-rebuild, for the same reason and one more:
+  # nixos-rebuild wraps the Nix it was built against onto its own PATH, ahead
+  # of anything in runtimeInputs. pkgs.nixos-rebuild carries nixpkgs' Nix, so
+  # the evaluation and build it drives would run on that — which does not know
+  # Determinate's eval-cores or lazy-trees ("unknown setting" on every run) and
+  # gets none of their speed. NixOS builds the system's own copy with
+  # nix.package; that is the one to use.
+  nixos-rebuild ? pkgs.nixos-rebuild,
   flake ? "/etc/nixos",
 }:
 let
@@ -22,12 +30,12 @@ pkgs.writeShellApplication {
   name = "system-upgrade";
   runtimeInputs = [
     nix
+    nixos-rebuild
   ]
   ++ (with pkgs; [
     coreutils
     git
     jq
-    nixos-rebuild
   ]);
   text = ''
     if [ "$(id -u)" -ne 0 ]; then
