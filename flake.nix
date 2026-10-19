@@ -1,8 +1,24 @@
 {
   description = "NixOS Development Host";
 
+  # Determinate Nix is built from nix-src, which cache.nixos.org does not
+  # carry. Without this, the first `nix run` / `nix build` of this flake from a
+  # machine that is not yet on Determinate compiles Nix itself. Once a machine
+  # runs Determinate Nix, determinate-nixd configures its own caches and this
+  # is no longer needed there. Same key as the --option flags in the readme.
+  nixConfig = {
+    extra-substituters = [ "https://install.determinate.systems" ];
+    extra-trusted-public-keys = [
+      "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    determinate = {
+      url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";

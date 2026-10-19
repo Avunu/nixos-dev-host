@@ -18,6 +18,7 @@ build alone and protects the SSH session you would need in order to stop it.
 | Boot | systemd-boot, systemd initrd, quiet, 10 generations |
 | Containers | podman with Docker compatibility (CLI alias and socket), btrfs storage driver |
 | Networking | systemd-networkd, Avahi publishing `<hostname>.local`, sshd (keys only), optional Samba |
+| Nix | [Determinate Nix](https://docs.determinate.systems/determinate-nix/), through its NixOS module: `determinate-nixd` runs the daemon, and the upgrade script and timers use the same Nix |
 | Toolchain | Python, Node, Bun, cmake, ccache, gh, direnv + nix-direnv, nix-ld |
 | Upgrades | one daily timer that only rebuilds when something actually moved — a local flake's lock, or the host repository's revision |
 | Secrets | agenix, decrypting with a pre-provisioned identity at `/etc/agenix/key` — not the SSH host key, so a redeploy never needs a re-key |
@@ -41,6 +42,27 @@ repository and reads those settings, plus a `local.nix` for anything else.
 
 On the machine itself, `system-upgrade` rebuilds from `devHost.upgradeFlake`
 when something moved, and a daily timer runs it (`features.autoUpgrade`).
+
+### Moving an existing host to Determinate Nix
+
+Determinate Nix comes from `install.determinate.systems`, not `cache.nixos.org`,
+and a host still on nixpkgs' Nix does not know that cache yet. Do the first
+switch by hand with it named, so the daily timer does not compile Nix on its own:
+
+```sh
+sudo nixos-rebuild switch --flake <flake> \
+  --option extra-substituters https://install.determinate.systems \
+  --option extra-trusted-public-keys cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=
+```
+
+`<flake>` is `devHost.upgradeFlake`: `/etc/nixos`, or the host repository's
+`github:Owner/repo#host`. Afterwards `determinate-nixd` adds the cache itself,
+so nothing more is needed, including for later Determinate Nix upgrades. A
+checkout of this repository needs the same two options for `nix run` and
+`nix build` until its own Nix is Determinate's; the flake's `nixConfig` offers
+them (accept with `--accept-flake-config`).
+
+`determinate-nixd login` is only for FlakeHub Cache and private flakes.
 
 ## Secrets
 
@@ -68,6 +90,13 @@ A machine with its own repository calls `lib.mkHost` and gets all of the above:
 
 ```nix
 {
+  # Where Determinate Nix is fetched from when this flake is built on a machine
+  # that is not on Determinate yet (an installer ISO, `nix run`).
+  nixConfig = {
+    extra-substituters = [ "https://install.determinate.systems" ];
+    extra-trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
+  };
+
   inputs.nixos-dev-host.url = "github:Avunu/nixos-dev-host";
   inputs.nixpkgs.follows = "nixos-dev-host/nixpkgs";
 
@@ -128,7 +157,7 @@ which carries the reasoning for each one.
 | modules/options.nix | every devHost.* option |
 | modules/boot.nix | kernel, command line, sysctls, bootloader |
 | modules/storage.nix | disko table, btrfs profile, swap, zswap, block layer |
-| modules/nix.nix | nix settings, the build resource guards, the upgrade timer |
+| modules/nix.nix | Determinate Nix, nix settings, the build resource guards, the upgrade timer |
 | modules/networking.nix | networkd, Avahi, ssh, firewall, Samba |
 | modules/services.nix | the remaining daemons |
 | modules/containers.nix | podman and container storage |
@@ -159,6 +188,12 @@ how the deprecated scripted initrd was found.
 
 All reversible, and each argued where it is set:
 
+- **Determinate Nix, not nixpkgs' Nix.** Its module replaces `nix.package` and
+  runs the daemon as `determinate-nixd`, which owns `/etc/nix/nix.conf`; what
+  NixOS generates from `nix.settings` lands in `nix.custom.conf`, which it
+  includes. The Nix version therefore follows the `determinate` input's lock,
+  not nixpkgs'. Anything here that runs `nix` uses `config.nix.package` rather
+  than `pkgs.nix` for that reason. `determinate.enable = false` turns it off.
 - **The build is not throttled.** `max-jobs` and `cores` stay at their
   defaults; capping parallelism on the machine whose job is compiling is the
   wrong end of the problem. What is bounded is `nix-daemon`'s share of memory

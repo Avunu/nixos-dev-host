@@ -9,8 +9,9 @@
 #   boot.nix        kernel, kernel command line, sysctls, bootloader
 #   storage.nix     the disko partition table, the btrfs profile, swap and
 #                   zswap, and the block-layer tuning
-#   nix.nix         nix settings, the build resource guards, the upgrade
-#                   script and its timer
+#   nix.nix         Determinate Nix (its module is imported below), nix
+#                   settings, the build resource guards, the upgrade script
+#                   and its timer
 #   flake-auto-update.nix
 #                   the timer that re-locks a repository's flake and pushes
 #                   the lock (devHost.flakeAutoUpdate, off by default)
@@ -33,6 +34,7 @@
 { inputs }:
 {
   imports = [
+    inputs.determinate.nixosModules.default
     inputs.disko.nixosModules.disko
 
     ./options.nix

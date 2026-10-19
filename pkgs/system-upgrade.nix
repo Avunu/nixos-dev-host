@@ -7,6 +7,10 @@
 #   github:Owner/repo#x  switch to the repository's HEAD, if it moved
 {
   pkgs,
+  # The system's own nix (config.nix.package), so the lock is updated and the
+  # rebuild driven by the same Nix the daemon runs — Determinate Nix, not
+  # whatever pkgs.nix happens to be.
+  nix ? pkgs.nix,
   flake ? "/etc/nixos",
 }:
 let
@@ -16,13 +20,15 @@ let
 in
 pkgs.writeShellApplication {
   name = "system-upgrade";
-  runtimeInputs = with pkgs; [
+  runtimeInputs = [
+    nix
+  ]
+  ++ (with pkgs; [
     coreutils
     git
     jq
-    nix
     nixos-rebuild
-  ];
+  ]);
   text = ''
     if [ "$(id -u)" -ne 0 ]; then
       exec sudo "$0" "$@"

@@ -26,7 +26,7 @@ let
       name = "flake-auto-update-${name}";
       runtimeInputs = [
         pkgs.git
-        pkgs.nix
+        config.nix.package
         pkgs.coreutils
       ];
       text = ''
@@ -89,7 +89,7 @@ let
         after = [ "network-online.target" ];
         path = [
           pkgs.git
-          pkgs.nix
+          config.nix.package
         ];
       };
     };

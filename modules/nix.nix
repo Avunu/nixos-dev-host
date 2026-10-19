@@ -13,10 +13,37 @@ let
   # manual runs — modules/packages.nix puts it in systemPackages.
   systemUpgradeScript = import ../pkgs/system-upgrade.nix {
     inherit pkgs;
+    nix = config.nix.package;
     flake = cfg.upgradeFlake;
   };
 in
 {
+  # ── Determinate Nix ─────────────────────────────────────────
+  # modules/default.nix imports Determinate's NixOS module, which does the
+  # switch: nix.package becomes Determinate Nix, nix-daemon runs under
+  # determinate-nixd, and the nix.conf NixOS generates from everything below
+  # moves to /etc/nix/nix.custom.conf, which determinate-nixd's own nix.conf
+  # includes. So this section is still plain nix.settings, with two things
+  # worth knowing:
+  #
+  #  - determinate-nixd writes its extra-substituters, extra-trusted-public-keys
+  #    and extra-experimental-features *after* that include, so the
+  #    `substituters`, `trusted-public-keys` and `experimental-features` below
+  #    add to what Determinate configures rather than replacing it. Checked in
+  #    a VM against the real daemon: the effective substituters end with
+  #    install.determinate.systems, which is also why upgrading Determinate
+  #    Nix itself needs no cache configured here. determinate-nixd enables
+  #    nix-command and flakes on its own; they stay in the list because it
+  #    costs nothing and the list then reads the same on any Nix.
+  #
+  #  - everything on this machine that runs `nix` for itself uses
+  #    config.nix.package rather than pkgs.nix, so the upgrade script and the
+  #    timers evaluate with the Nix the daemon is running. pkgs.nix is
+  #    nixpkgs' Nix, and would quietly keep the machine half on the old one.
+  #
+  # `determinate.enable = false` backs this out; nix.package then falls back to
+  # pkgs.nix and nothing else here changes.
+
   # ── The nixpkgs source is not worth 210 MB here ─────────────
   # Building a system from a flake makes NixOS pin that flake's nixpkgs into
   # the machine, both in /etc/nix/registry.json (so `nixpkgs#foo` resolves)
@@ -279,9 +306,9 @@ in
     };
     wants = [ "network-online.target" ];
     after = [ "network-online.target" ];
-    path = with pkgs; [
-      git
-      nix
+    path = [
+      pkgs.git
+      config.nix.package
     ];
   };
 

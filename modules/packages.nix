@@ -10,6 +10,7 @@ let
 
   systemUpgradeScript = import ../pkgs/system-upgrade.nix {
     inherit pkgs;
+    nix = config.nix.package;
     flake = cfg.upgradeFlake;
   };
 in
