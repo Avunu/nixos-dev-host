@@ -24,6 +24,11 @@
 #     /etc/nixos gets a small synthesized flake that imports this module and
 #     reads the per-host devHost-settings.json the installer writes. For the
 #     generic template, where identity is chosen at install time.
+#
+# A local host is also where new remote hosts come from: its wizard, started in
+# an empty directory, offers to bootstrap a repository for the machine
+# (templates/host-repo, filled in by scripts/bootstrap.sh) and continues from
+# that repository's own `nix run`. Either way the ISO is built the same.
 { inputs, devHost }:
 {
   # The host flake's own `self` — shipped to the ISOs, and its revision is what
@@ -57,6 +62,37 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   remote = deployedConfiguration != null;
   agenixKeyPath = import ./agenix-key-path.nix;
+  # Where a host repo keeps its identity, relative to the repository root (the
+  # templates/host-repo layout). Naming it on the asset lets the wizard, `deploy`
+  # and `install` decrypt it with the operator's SSH key even outside the devShell
+  # (nixos-install-helper's `ageFile` asset source), so `nix run` works from a
+  # fresh checkout before direnv has been allowed.
+  agenixKeyRepoFile = "secrets/key.age";
+
+  # The program that writes a new host repository into the current directory.
+  # Only a local host offers it: a remote host already is one.
+  bootstrapProgram = pkgs.writeShellApplication {
+    name = "devhost-bootstrap";
+    runtimeInputs = [
+      pkgs.age
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.gawk
+      pkgs.gh
+      pkgs.git
+      pkgs.gnused
+      pkgs.gum
+      pkgs.jq
+      pkgs.nix
+      pkgs.openssh
+    ];
+    text = ''
+      export IH_TEMPLATE=${../templates/host-repo}
+      # Overridable, to point a trial run at a checkout (path:/…) instead of GitHub.
+      export IH_UPSTREAM="''${IH_UPSTREAM:-${upstream}}"
+      ${builtins.readFile ../scripts/bootstrap.sh}
+    '';
+  };
 
   hostModule = {
     imports = [ devHost ] ++ modules;
@@ -81,7 +117,8 @@ let
         source = {
           env = "agenix__key";
           prompt = "paste";
-        };
+        }
+        // lib.optionalAttrs (agenixKeyFile != null) { ageFile = agenixKeyRepoFile; };
       }
     ];
   }
@@ -109,6 +146,7 @@ let
           "githubTokenFile"
         ];
         hints."devHost.diskDevice" = "disk-device";
+        bootstrap = bootstrapProgram;
       }
   )
   // installer;

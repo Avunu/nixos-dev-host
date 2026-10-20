@@ -68,6 +68,14 @@
       nixosModules.devHost = import ./modules { inherit inputs; };
       nixosModules.default = self.nixosModules.devHost;
 
+      # What `nix run`'s bootstrap writes for a new machine, usable on its own:
+      #   nix flake init -t github:Avunu/nixos-dev-host#host
+      # (the @…@ placeholders are filled in by scripts/bootstrap.sh).
+      templates.host = {
+        path = ./templates/host-repo;
+        description = "A repository for one dev host, rebuilt by the machine from GitHub";
+      };
+
       lib = {
         mkHost = import ./lib/mk-host.nix {
           inherit inputs;

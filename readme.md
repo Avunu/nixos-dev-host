@@ -26,6 +26,39 @@ build alone and protects the SSH session you would need in order to stop it.
 
 ## Install and update
 
+### A new machine
+
+Make an empty directory, run the wizard in it, and let it create the machine's
+repository:
+
+```sh
+mkdir my-host && cd my-host
+nix run github:Avunu/nixos-dev-host
+```
+
+It asks the settings questions (host name, user, disk, SSH keys, features), then
+offers **Create a GitHub-managed repository here**. That does the following, and
+then carries on into the new repository's own `nix run`:
+
+- writes `flake.nix`, `host.nix` and `devHost-settings.json` (the answers, now
+  tracked), plus a `secrets.nix` and a README;
+- generates the host's agenix identity and stores it as `secrets/key.age`,
+  encrypted to your SSH key (and any in the settings' `sshKeys`);
+- for a private repository, asks for a read-only GitHub token and stores it as
+  `secrets/github-token.age`, encrypted to you and to the host identity, so the
+  machine can fetch its own configuration;
+- runs `nix flake lock`, commits, and offers `gh repo create --private --push`.
+
+The machine then tracks `github:<owner>/<repo>#<hostName>` (`lib.mkHost`'s
+`deployedConfiguration`): push to the default branch and its next upgrade
+switches to it. Choosing **Continue without one** instead skips all of that and
+builds the generic template, whose `/etc/nixos` holds the machine's settings
+(the "local" style below). Both end at the same choice of network install,
+unattended ISO or guided ISO. `nix flake init -t github:Avunu/nixos-dev-host#host`
+gives the repository's files without the wizard.
+
+### An existing checkout
+
 From a checkout (the apps build `.`):
 
 ```sh
@@ -35,10 +68,11 @@ nix build --impure .#installerIso   # offline ISO that installs this exact host,
 nix build .#guidedIso               # generic offline ISO: asks hostname, user, disk and key on the box
 ```
 
-Per-host answers (`nix run .#configure`) land in `installer/devHost-settings.json`,
-which is gitignored; the wizard and `deploy` read it by path. A host installed
-from here gets `/etc/nixos` as a small flake that imports `devHost` from this
-repository and reads those settings, plus a `local.nix` for anything else.
+In this repository (the generic template), per-host answers (`nix run
+.#configure`) land in `installer/devHost-settings.json`, which is gitignored;
+the wizard and `deploy` read it by path. A host installed from it gets
+`/etc/nixos` as a small flake that imports `devHost` from this repository and
+reads those settings, plus a `local.nix` for anything else.
 
 On the machine itself, `system-upgrade` rebuilds from `devHost.upgradeFlake`
 when something moved, and a daily timer runs it (`features.autoUpgrade`).
@@ -74,7 +108,9 @@ The key itself lives in the host's repository as `secrets/key.age`, encrypted to
 the operators only. Enter that repository's devShell (`direnv allow`, via
 `use flake`) and agenix-shell decrypts it into `$agenix__key`; `deploy`, the
 wizard and `installerIso` all pick it up from there and write it to
-`/etc/agenix/key` on the target. A missing key stops the install rather than
+`/etc/agenix/key` on the target. Outside the devShell (a fresh checkout, before
+`direnv allow`) the wizard decrypts `secrets/key.age` itself with the same SSH
+identities. A missing key stops the install rather than
 producing a machine that cannot decrypt anything. agenix-shell tries
 `$AGENIX_IDENTITY`, then `~/.ssh/id_ed25519` and `~/.ssh/id_rsa` (hosts can
 override the list).
@@ -166,6 +202,8 @@ which carries the reasoning for each one.
 | modules/secrets.nix | the agenix identity and GitHub access |
 | pkgs/ | the derivations more than one module needs |
 | lib/mk-host.nix | `lib.mkHost`: a host flake's installers, devShell and configuration |
+| templates/host-repo/ | the files `bootstrap` writes for a new machine (`templates.host`) |
+| scripts/bootstrap.sh | the bootstrap program: key, token, settings, commit, publish |
 
 ## Verifying a change
 
