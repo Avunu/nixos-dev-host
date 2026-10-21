@@ -271,6 +271,13 @@ All reversible, and each argued where it is set:
   registry is pinned to the same revision as a github ref instead, so
   `nix shell nixpkgs#foo` still resolves to what this system was built from.
   Offline evaluation is what is given up.
+- **The latest kernel, and redistributable firmware.** `boot.kernelPackages`
+  is `linuxPackages_latest`, the kernel the NixOS installer boots, so a machine
+  that boots the installer boots the same kernel once installed. The cost is
+  regressions arriving unattended; a host sets `pkgs.linuxPackages` for the LTS.
+  `hardware.enableRedistributableFirmware` is on, because a host repository has
+  no `hardware-configuration.nix` to set it, and without it an AMD GPU boots to a
+  dead display.
 - **Man pages and dev headers are on.** The NixOS manual is not — it would be
   rebuilt on every upgrade.
 - **The upgrade timer is daily and does not reboot.** It tracks unstable HEAD
