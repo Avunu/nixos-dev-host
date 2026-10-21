@@ -155,6 +155,27 @@ version: `system-upgrade` rebuilds when the repository's revision differs from
 the running one, and never updates a lock of its own. Update the lock in the
 repository.
 
+### GitHub Actions runners
+
+`nixosModules.githubRepoRunners` is not part of devHost. A host that runs
+self-hosted runners imports it beside devHost (`modules = [
+nixos-dev-host.nixosModules.githubRepoRunners ./host.nix ]`) and names the
+repositories:
+
+```nix
+services.githubRepoRunners = {
+  enable = true;
+  owner = "Owner";
+  tokenFile = config.age.secrets.runner-token.path;  # a PAT that administers them
+  repos = { quiet-repo = 1; busy-repo = 8; };        # runners per repository
+};
+```
+
+The host declares the user the runners run as (`github-runner` by default),
+puts it in `nix.settings.trusted-users` and owns the token's secret. See
+[modules/github-repo-runners.nix](modules/github-repo-runners.nix) for every
+option.
+
 ## Configuration
 
 Everything is under `devHost.*`. See [modules/options.nix](modules/options.nix),
@@ -166,6 +187,8 @@ which carries the reasoning for each one.
 | username | string | "dev" — likewise |
 | initialPassword | string | "password" — change it |
 | diskDevice | string | /dev/sda |
+| nixDiskDevice | string or null | null — a second disk holding only `/nix`, wiped at install. Prefer a `/dev/disk/by-id/` path |
+| nixDiskCompression | string | zstd:6 — btrfs compression of that disk (the root is zstd:3); see the measurements in `modules/options.nix` |
 | swapSizeGiB | int | 96 — 0 omits the partition. Install-time |
 | sshKeys | list of strings | [ ] |
 | timeZone / locale | string | America/New_York / en_US.UTF-8 |
@@ -200,6 +223,7 @@ which carries the reasoning for each one.
 | modules/packages.nix | what is installed |
 | modules/system.nix | console, locale, users, documentation |
 | modules/secrets.nix | the agenix identity and GitHub access |
+| modules/github-repo-runners.nix | self-hosted GitHub Actions runners, one per repository — opt-in, `nixosModules.githubRepoRunners` |
 | pkgs/ | the derivations more than one module needs |
 | lib/mk-host.nix | `lib.mkHost`: a host flake's installers, devShell and configuration |
 | templates/host-repo/ | the files `bootstrap` writes for a new machine (`templates.host`) |
