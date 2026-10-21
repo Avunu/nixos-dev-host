@@ -1,6 +1,16 @@
-{ lib, ... }:
+{ lib, pkgs, ... }:
 with lib;
 {
+  # ── Firmware ────────────────────────────────────────────────
+  # The blobs amdgpu, most NICs, Wi-Fi and Bluetooth load. nixos-generate-config
+  # writes this into a hardware-configuration.nix, but a host repository has
+  # none, so without it here the firmware package is empty — and a host with an
+  # AMD GPU boots to a dead display: amdgpu takes the screen from the firmware
+  # framebuffer, then fails its probe for want of firmware, and with
+  # consoleLogLevel at 0 nothing says so. Redistributable only; the licences
+  # that forbid redistribution are not wanted here.
+  hardware.enableRedistributableFirmware = mkDefault true;
+
   boot = {
     initrd = {
       # A plain list rather than mkDefault, so a host adding a module for its
@@ -38,9 +48,14 @@ with lib;
       verbose = mkDefault false;
     };
 
-    # Kernel package deliberately left at the nixpkgs default (LTS) — see
-    # commit 97b60b1. linuxPackages_latest on a machine that rebuilds itself
-    # unattended is a way to find out about regressions at 4am.
+    # The latest kernel, not the LTS one. Hardware is fixed in new kernels
+    # first, and these hosts are installed from a NixOS installer that boots the
+    # latest kernel: a machine that boots the installer then boots the same
+    # kernel once installed. This reverses an earlier decision for the LTS
+    # (commit 97b60b1) — the cost is the one that decision named: a machine that
+    # rebuilds itself unattended finds regressions at 4am. A host that wants the
+    # LTS back sets boot.kernelPackages = pkgs.linuxPackages.
+    kernelPackages = mkDefault pkgs.linuxPackages_latest;
 
     kernelParams = [
       "boot.shell_on_fail"
