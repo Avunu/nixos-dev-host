@@ -205,6 +205,7 @@ which carries the reasoning for each one.
 | --- | --- | --- |
 | autoUpgrade | on | the daily upgrade timer; `system-upgrade` works either way |
 | buildGuards | on | cgroup limits protecting sshd and containers from a build storm |
+| consoleMonitor | on | btop on tty1 in place of a login prompt (tty2–6 still log in) |
 | containers | on | podman + Docker compatibility |
 | firmwareUpdates | off | fwupd — a daemon and ~200 MB for something you do deliberately |
 | networkDiscovery | on | Avahi, **publishing** — reaching a new box as `<hostname>.local` depends on it |

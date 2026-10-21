@@ -19,7 +19,7 @@
 #   services.nix    the remaining daemons, each with a reason to be here
 #   containers.nix  podman and container storage
 #   packages.nix    what is installed, and the shell environment
-#   system.nix      console, locale, users, documentation
+#   system.nix      console (btop on tty1), locale, users, documentation
 #   secrets.nix     the agenix identity (/etc/agenix/key) and GitHub access
 #                   built on it
 #
