@@ -330,6 +330,30 @@ with lib;
         '';
       };
 
+      consoleMonitor = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          btop on tty1 instead of a login prompt, so a screen plugged into the
+          machine shows what it is doing. It is a systemd service that owns
+          the console the way a display manager would (modules/system.nix),
+          not a program started from a login shell, so there is no login to
+          get past and nothing to log out of.
+
+          tty2 to tty6 keep their login prompts (Ctrl-Alt-F2), SSH is
+          untouched, and `systemctl start getty@tty1` swaps tty1 over to a
+          login until the next boot.
+
+          It runs as an unprivileged dynamic user, deliberately: a console
+          that asks for no password should be able to look, not to signal or
+          renice anything. Quitting btop starts it again.
+
+          On a box that never has a screen attached this is sampling for an
+          audience of nobody, and a reason to turn it off — tty1 then gets an
+          ordinary login prompt like the others.
+        '';
+      };
+
       containers = mkOption {
         type = types.bool;
         default = true;

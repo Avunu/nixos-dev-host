@@ -19,6 +19,64 @@ in
   # box there is not even a screen for it to have been read on.
   console.keyMap = mkDefault "us";
 
+  # ── tty1 ────────────────────────────────────────────────────
+  # btop instead of a login prompt, as a service that owns the console — the
+  # arrangement nixos-install-helper's installer uses for the same tty, and
+  # for the same reasons: it is findable (`systemctl status btop-console`),
+  # it does not depend on a login shell sourcing anything, and `tty-force`
+  # gives it a real controlling terminal.
+  #
+  # Two things have to be true for the service to keep tty1. getty.target
+  # wants autovt@tty1, so nothing else may start a getty there: the unit is
+  # disabled, which is what nixpkgs' greetd module does for the same reason
+  # (a switch would otherwise start it and take the console back). And the
+  # service conflicts with getty@tty1, so starting one by hand swaps tty1 to
+  # a login instead of two programs sharing a terminal. tty2…6 are untouched:
+  # logind spawns autovt@ttyN for them as usual.
+  systemd.services = mkIf cfg.features.consoleMonitor {
+    "autovt@tty1".enable = false;
+
+    btop-console = {
+      description = "btop on the tty1 console";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "systemd-user-sessions.service" ];
+      conflicts = [ "getty@tty1.service" ];
+      # A bare service inherits no TERM or locale, which agetty and login would
+      # have set. HOME is where btop keeps btop.conf: StateDirectory below, so
+      # a setting changed at the console survives a reboot.
+      environment = {
+        TERM = "linux";
+        LANG = config.i18n.defaultLocale;
+        HOME = "/var/lib/btop-console";
+      };
+      serviceConfig = {
+        # --tty because this is always a kernel virtual console: 16 colours and
+        # no braille, so the graphs need the ANSI-safe symbols.
+        ExecStart = "${getExe pkgs.btop} --tty";
+        # Unprivileged: see features.consoleMonitor. systemd opens the tty
+        # before it drops privileges, so this costs nothing at startup. btop
+        # still lists every process; it just cannot read their I/O counters.
+        DynamicUser = mkDefault true;
+        StateDirectory = "btop-console";
+        # Quitting btop would otherwise leave a dead screen with no way back
+        # short of switching VTs.
+        Restart = "always";
+        RestartSec = 1;
+        StandardInput = "tty-force";
+        StandardOutput = "tty";
+        # The journal, not the screen: btop's errors would be painted over
+        # its own display.
+        StandardError = "journal";
+        TTYPath = "/dev/tty1";
+        TTYReset = true;
+        TTYVHangup = true;
+        TTYVTDisallocate = true;
+        # Wait for the rest of boot, so its output is not drawn under btop.
+        Type = "idle";
+      };
+    };
+  };
+
   # ── Documentation ───────────────────────────────────────────
   # Man pages and development headers are ON, which reverses what this
   # configuration used to do. All four switches were false, copied from a
