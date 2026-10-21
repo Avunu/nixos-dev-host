@@ -133,12 +133,20 @@ let
     tokenFile = if r.tokenFile != null then r.tokenFile else cfg.tokenFile;
     url = "https://github.com/${cfg.owner}/${r.repo}";
     workDir = workDirOf key;
-    # nixpkgs builds github-runner with node24 only (node20 is end-of-life and
-    # gone from nixpkgs), but the runner still starts externals/node20 for its
-    # own work, such as evaluating hashFiles() in a workflow expression, and
-    # fails with "No such file or directory". This makes it use node24 there.
-    extraEnvironment.ACTIONS_RUNNER_FORCED_INTERNAL_NODE_VERSION = "node24";
+    package = runnerPackage;
   };
+
+  # nixpkgs builds github-runner with node24 only (node20 is end-of-life and
+  # gone from nixpkgs), but the runner still runs externals/node20 for its own
+  # work, such as evaluating hashFiles() in a workflow expression, and fails
+  # with "No such file or directory". ACTIONS_RUNNER_FORCED_INTERNAL_NODE_VERSION
+  # cannot redirect it: the runner accepts only "node20" there. Point node20 at
+  # node24 instead.
+  runnerPackage = pkgs.github-runner.overrideAttrs (old: {
+    postInstall = old.postInstall + ''
+      ln -s ${pkgs.nodejs_24} $out/lib/externals/node20
+    '';
+  });
 
   # A runner registers with GitHub (a dotnet process, and an API call) the first
   # time it starts and whenever its config changes. Start the `repos` runners in
