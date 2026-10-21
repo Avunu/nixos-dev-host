@@ -27,6 +27,62 @@ with lib;
       '';
     };
 
+    nixDiskDevice = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "/dev/disk/by-id/ata-Example_SSD_2TB_S1A2B3C4D5E6";
+      description = ''
+        A second disk that holds /nix and nothing else: one btrfs filesystem
+        with the root's mount options (but its own compression level, see
+        nixDiskCompression), mounted ahead of the rest of the system. Null,
+        the default, leaves /nix on the root filesystem, on diskDevice.
+
+        For a machine whose store outgrows its system disk — a CI runner, a
+        build host — since /nix is what such a machine fills: the store
+        itself, its database and the garbage collector's roots all live
+        under it.
+
+        Like diskDevice this is install-time, and the disk is wiped. On a
+        machine that is already running it adds a /nix mount that nothing has
+        formatted, and the machine will not boot; move an installed store
+        over by hand instead.
+
+        Prefer a /dev/disk/by-id/ path. /dev/sdX is whichever disk the kernel
+        probed first, so it can name the installer's own USB stick.
+      '';
+    };
+
+    nixDiskCompression = mkOption {
+      type = types.strMatching "(zstd|zlib)(:[0-9]+)?|lzo";
+      default = "zstd:6";
+      description = ''
+        The btrfs compression (always forced, see modules/storage.nix) of the
+        filesystem on nixDiskDevice. It has no effect without one: the root
+        filesystem is always zstd:3.
+
+        A Nix store is written once and read for as long as it lives, so it
+        can afford more than the root does. Measured over a random sample of
+        a real store, compressed the way btrfs does it (128 KiB extents):
+
+        | level | ratio | single-thread speed |
+        | --- | --- | --- |
+        | zstd:1 | 1.78 | 566 MB/s |
+        | zstd:3 | 1.84 | 418 MB/s |
+        | zstd:6 | 1.90 | 140 MB/s |
+        | zstd:9 | 1.91 | 94 MB/s |
+        | zstd:12 | 1.92 | 40 MB/s |
+        | zstd:15 | 1.99 | 18 MB/s |
+
+        The default is where the curve bends: 9 and 12 buy almost nothing, and
+        15 is slow enough to throttle writes to a SATA SSD. A change of level
+        applies to what is written after the next mount; extents already
+        on disk keep theirs.
+
+        A typo here fails at mount time, in the initrd, so the type rejects
+        anything that is not a btrfs compression name.
+      '';
+    };
+
     swapSizeGiB = mkOption {
       type = types.int;
       default = 96;

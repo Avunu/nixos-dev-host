@@ -68,6 +68,10 @@
       nixosModules.devHost = import ./modules { inherit inputs; };
       nixosModules.default = self.nixosModules.devHost;
 
+      # Self-hosted GitHub Actions runners, one per repository. Opt-in, and not
+      # part of devHost: a host that wants them imports it beside devHost.
+      nixosModules.githubRepoRunners = ./modules/github-repo-runners.nix;
+
       # What `nix run`'s bootstrap writes for a new machine, usable on its own:
       #   nix flake init -t github:Avunu/nixos-dev-host#host
       # (the @…@ placeholders are filled in by scripts/bootstrap.sh).
@@ -96,10 +100,26 @@
           inherit system;
           modules = [
             self.nixosModules.devHost
+            self.nixosModules.githubRepoRunners
             {
               devHost = {
                 hostName = "example";
                 username = "example";
+                # Evaluates the disko table with the second disk in it too.
+                nixDiskDevice = "/dev/disk/by-id/example-nix-disk";
+              };
+
+              # Evaluates the runners module: the user is the host's to declare.
+              users.groups.github-runner = { };
+              users.users.github-runner = {
+                group = "github-runner";
+                isSystemUser = true;
+              };
+              services.githubRepoRunners = {
+                enable = true;
+                owner = "example";
+                tokenFile = "/run/example-runner-token";
+                repos.example = 2;
               };
             }
           ];

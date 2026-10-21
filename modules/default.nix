@@ -23,6 +23,10 @@
 #   secrets.nix     the agenix identity (/etc/agenix/key) and GitHub access
 #                   built on it
 #
+# github-repo-runners.nix lives here too but is not imported below: it is its
+# own opt-in module (nixosModules.githubRepoRunners), for the hosts that run
+# self-hosted GitHub Actions runners.
+#
 # ../pkgs holds the derivations more than one module needs: the upgrade
 # script (packages.nix installs it, nix.nix times it).
 #

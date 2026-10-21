@@ -21,30 +21,34 @@ let
     };
   };
 
+  # The mount options of every btrfs filesystem here; only the compression
+  # differs between them.
+  btrfsMountOptions = compression: [
+    # compress-force, not compress. btrfs's heuristic samples the *first*
+    # blocks of a file and, if they look incompressible, marks the whole
+    # file to skip compression permanently. For an ELF binary behind an
+    # incompressible header that is the wrong call, made once, for the
+    # life of the file — and a Nix store is mostly ELF. Forcing it only
+    # costs attempts: btrfs still stores an extent raw whenever
+    # compressing it would not be smaller.
+    #
+    # This is a mount option, so it takes effect on remount. Files
+    # already written keep the extents they have until they are rewritten.
+    "compress-force=${compression}"
+    # Release extents as they are freed rather than walking the whole
+    # filesystem on a timer. See services.fstrim below, which this
+    # replaces.
+    "discard=async"
+    "noatime"
+  ];
+
   rootPartition = {
     size = "100%";
     content = {
       type = "filesystem";
       format = "btrfs";
       mountpoint = "/";
-      mountOptions = [
-        # compress-force, not compress. btrfs's heuristic samples the *first*
-        # blocks of a file and, if they look incompressible, marks the whole
-        # file to skip compression permanently. For an ELF binary behind an
-        # incompressible header that is the wrong call, made once, for the
-        # life of the file — and a Nix store is mostly ELF. Forcing it only
-        # costs attempts: btrfs still stores an extent raw whenever
-        # compressing it would not be smaller.
-        #
-        # This is a mount option, so it takes effect on remount. Files
-        # already written keep the extents they have until they are rewritten.
-        "compress-force=zstd:3"
-        # Release extents as they are freed rather than walking the whole
-        # filesystem on a timer. See services.fstrim below, which this
-        # replaces.
-        "discard=async"
-        "noatime"
-      ];
+      mountOptions = btrfsMountOptions "zstd:3";
       # No -d/-m here, so mkfs.btrfs picks its own: single data, DUP
       # metadata. DUP is worth keeping on a machine whose job is to hold
       # other people's work — and it is also why max_inline is left at its
@@ -76,7 +80,35 @@ in
   # it is install-time only: changing swapSizeGiB or the mkfs arguments does
   # not repartition or reformat a machine that is already running. Mount
   # options do apply on the next mount.
+  #
+  # devHost.nixDiskDevice adds a second disk below, for /nix alone.
   disko.devices = mkDefault {
+    disk.nix = mkIf (cfg.nixDiskDevice != null) {
+      device = cfg.nixDiskDevice;
+      type = "disk";
+      content = {
+        type = "gpt";
+        partitions.nix = {
+          size = "100%";
+          content = {
+            type = "filesystem";
+            format = "btrfs";
+            mountpoint = "/nix";
+            # The root's options, but with the store's own compression level
+            # (devHost.nixDiskCompression). NixOS counts /nix among the
+            # filesystems needed to boot (nixos/lib/utils.nix), so it is
+            # mounted in the initrd, before the init that lives inside it is
+            # run.
+            mountOptions = btrfsMountOptions cfg.nixDiskCompression;
+            extraArgs = [
+              "-L"
+              "nix"
+            ];
+          };
+        };
+      };
+    };
+
     disk.main = {
       device = cfg.diskDevice;
       type = "disk";
