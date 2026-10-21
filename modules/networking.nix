@@ -67,7 +67,7 @@ in
   services.avahi = {
     enable = mkDefault cfg.features.networkDiscovery;
     nssmdns4 = mkDefault true;
-    publish = {
+    settings.publish = {
       publish-addresses = mkDefault true;
       disable-publishing = mkDefault false;
       publish-workstation = mkDefault true;
