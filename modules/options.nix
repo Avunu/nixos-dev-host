@@ -190,7 +190,9 @@ with lib;
                   single lock commit on every change, force-pushed with a
                   lease so a human push to it is never silently overwritten.
                   Nothing downstream applies a side branch until someone merges
-                  it.
+                  it, so a pull request into `branch` is opened for it when
+                  none is open. Pushing to the open one updates it; one that
+                  was closed or merged for the very same lock is not reopened.
                 '';
               };
 
@@ -225,7 +227,9 @@ with lib;
 
           Pushing needs write access. The push goes through the same GitHub
           credential helper as the reads, so githubTokenFile has to be a token
-          that can write to every repository listed here.
+          that can write to every repository listed here. A repository with a
+          pushBranch also gets pull requests opened through the GitHub API with
+          that token, so it needs pull-request write access there too.
         '';
       };
     };
