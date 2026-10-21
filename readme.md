@@ -171,8 +171,12 @@ services.githubRepoRunners = {
 };
 ```
 
-The host declares the user the runners run as (`github-runner` by default),
-puts it in `nix.settings.trusted-users` and owns the token's secret. See
+The module also brings what the runners need to be useful: the `github-runner`
+user (trusted in `nix.settings.trusted-users`, with a home that keeps Nix's git
+cache between jobs), the packages a workflow written for GitHub's hosted Ubuntu
+image expects, the nix-ld libraries that the `setup-*` actions' downloads need,
+and access to podman's Docker socket (root-equivalent; `dockerSocket = false`
+turns it off). The host owns the token's secret. See
 [modules/github-repo-runners.nix](modules/github-repo-runners.nix) for every
 option.
 

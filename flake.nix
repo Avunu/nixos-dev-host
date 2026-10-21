@@ -109,12 +109,7 @@
                 nixDiskDevice = "/dev/disk/by-id/example-nix-disk";
               };
 
-              # Evaluates the runners module: the user is the host's to declare.
-              users.groups.github-runner = { };
-              users.users.github-runner = {
-                group = "github-runner";
-                isSystemUser = true;
-              };
+              # Evaluates the runners module, user and all.
               services.githubRepoRunners = {
                 enable = true;
                 owner = "example";

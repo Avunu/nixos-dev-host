@@ -17,10 +17,14 @@
 # its own workDir, so two concurrent jobs cannot collide over one checkout.
 #
 # Not part of nixosModules.devHost: a host opts in by importing
-# nixos-dev-host.nixosModules.githubRepoRunners. What the host still declares
-# itself: the user and group the runners run as (`user`, `group`; the user must
-# be in nix.settings.trusted-users, or the workflows' `access-tokens` are
-# silently ignored) and the token's agenix secret, owned by that user.
+# nixos-dev-host.nixosModules.githubRepoRunners. The one thing it still
+# provides itself is the token's agenix secret, owned by `user`.
+#
+# Besides the runners this sets up what they need to be of any use: the user,
+# trusted in nix.settings.trusted-users (or the workflows' `access-tokens` are
+# silently ignored); the packages a workflow written for GitHub's hosted Ubuntu
+# image expects; and the nix-ld libraries that the prebuilt toolchains
+# setup-node, setup-python, setup-uv and setup-bun download need.
 {
   config,
   lib,
@@ -30,6 +34,62 @@
 let
   cfg = config.services.githubRepoRunners;
   inherit (lib) mkOption types;
+
+  # What a workflow written for GitHub's hosted Ubuntu image commonly calls, so
+  # jobs can move here with `runs-on` alone. The first four are what
+  # actions/checkout (git) and actions/cache (tar, zstd, gzip) need; nixpkgs'
+  # runner unit already adds bash, coreutils and nix.
+  hostedImagePackages = with pkgs; [
+    git
+    gnutar
+    gzip
+    zstd
+
+    curl
+    diffutils
+    file
+    findutils
+    gawk
+    gh
+    gnugrep
+    gnumake
+    gnused
+    jq
+    nodejs
+    openssh
+    procps
+    python3
+    unzip
+    wget
+    which
+    xz
+    zip
+  ];
+
+  # What the binaries those setup-* actions download expect from an Ubuntu
+  # image. They are added to nixpkgs' own default set (a list option, so the
+  # definitions concatenate).
+  nixLdLibraries = with pkgs; [
+    stdenv.cc.cc.lib
+    bzip2
+    curl
+    expat
+    gdbm
+    icu
+    keyutils
+    krb5
+    libffi
+    libuuid
+    libxcrypt-legacy
+    libxml2
+    ncurses
+    openssl
+    readline
+    sqlite
+    util-linux
+    xz
+    zlib
+  ];
 
   workDirOf = key: "${cfg.workRoot}/work-${key}";
   unitOf = key: "github-runner-${key}";
@@ -209,15 +269,30 @@ in
 
     extraPackages = mkOption {
       type = types.listOf types.package;
-      # actions/checkout needs git; actions/cache shells out to tar/zstd/gzip.
-      default = with pkgs; [
-        git
-        gnutar
-        gzip
-        zstd
-      ];
-      defaultText = lib.literalExpression "with pkgs; [ git gnutar gzip zstd ]";
-      description = "Packages on the `PATH` of every runner's workflows.";
+      default = hostedImagePackages ++ lib.optional cfg.dockerSocket pkgs.docker-client;
+      defaultText = lib.literalExpression "<what GitHub's hosted Ubuntu image has> ++ optional dockerSocket docker-client";
+      description = ''
+        Packages on the `PATH` of every runner's workflows. The default is what
+        a workflow written for GitHub's hosted Ubuntu image commonly calls (git,
+        tar, zstd, curl, jq, gh, make, node, python, …), plus the Docker CLI
+        when `dockerSocket` is on. Setting this replaces all of it.
+      '';
+    };
+
+    dockerSocket = mkOption {
+      type = types.bool;
+      default = config.virtualisation.podman.dockerSocket.enable;
+      defaultText = lib.literalExpression "config.virtualisation.podman.dockerSocket.enable";
+      description = ''
+        Let the workflows use Docker: the runners' user joins the `podman`
+        group, which owns podman's rootful socket (root:podman 0660, symlinked
+        at /run/docker.sock), and the Docker CLI (with buildx and compose) is
+        on their `PATH`.
+
+        Anyone who can run a job here can therefore start a privileged
+        container, which is to say is root on this machine. Turn it off to take
+        that back.
+      '';
     };
 
     namePrefix = mkOption {
@@ -230,13 +305,28 @@ in
     user = mkOption {
       type = types.str;
       default = "github-runner";
-      description = "User the runners run as. Declared by the host, not here.";
+      description = "User the runners run as. Declared here unless `createUser` is off.";
     };
 
     group = mkOption {
       type = types.str;
       default = "github-runner";
-      description = "Group the runners run as. Declared by the host, not here.";
+      description = "Group the runners run as. Declared here unless `createUser` is off.";
+    };
+
+    createUser = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Declare `user` and `group`: a system user whose home is `workRoot`.
+        Home is what makes sharing one user worth doing, since Nix's git cache
+        (~/.cache/nix/gitv3) persists there between jobs and a submodule fetch
+        is incremental.
+
+        Turn it off to bring your own, which then needs the `podman` group too
+        if `dockerSocket` is on. Either way `user` is added to
+        nix.settings.trusted-users.
+      '';
     };
 
     workRoot = mkOption {
@@ -268,7 +358,33 @@ in
           lib.length (lib.attrNames repoRunners) == lib.foldl' (n: repo: n + countOf repo) 0 served;
         message = "services.githubRepoRunners: two runners ended up with the same name; a repository name probably ends in \"-<number>\".";
       }
+      {
+        assertion = cfg.dockerSocket -> config.virtualisation.podman.dockerSocket.enable;
+        message = "services.githubRepoRunners.dockerSocket needs virtualisation.podman.dockerSocket.enable, which is what provides the socket.";
+      }
     ];
+
+    users.groups.${cfg.group} = lib.mkIf cfg.createUser { };
+    users.users.${cfg.user} = lib.mkIf cfg.createUser {
+      createHome = true;
+      description = "GitHub Actions self-hosted runners";
+      inherit (cfg) group;
+      home = cfg.workRoot;
+      isSystemUser = true;
+      extraGroups = lib.optional cfg.dockerSocket "podman";
+    };
+
+    # A trusted user, or the workflows' `access-tokens` (needed to fetch
+    # private submodules) are silently ignored.
+    nix.settings.trusted-users = [ cfg.user ];
+
+    # nix-ld itself is normally enabled by devHost. nix-ld falls back to
+    # /run/current-system/sw/share/nix-ld when NIX_LD is unset, so the runner
+    # units need no extra environment.
+    programs.nix-ld = {
+      enable = lib.mkDefault true;
+      libraries = nixLdLibraries;
+    };
 
     services.github-runners = lib.mapAttrs mkRunner allRunners;
 
