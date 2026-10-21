@@ -68,9 +68,9 @@ in
     enable = mkDefault cfg.features.networkDiscovery;
     nssmdns4 = mkDefault true;
     publish = {
-      addresses = mkDefault true;
-      enable = mkDefault true;
-      workstation = mkDefault true;
+      publish-addresses = mkDefault true;
+      disable-publishing = mkDefault false;
+      publish-workstation = mkDefault true;
     };
   };
 
