@@ -8,41 +8,156 @@ with lib;
 let
   cfg = config.devHost.flakeAutoUpdate;
 
-  # One pass over one repository: bring a clone up to the remote base branch,
-  # re-lock every input, and push the lock if it moved. Nothing is committed
-  # unless flake.lock changed, so on a quiet day the timer does nothing but
-  # fetch.
+  # One branch's worth of a pass, run from inside the clone that refresh has
+  # just fetched: rebuild the branch as the remote base branch plus one lock
+  # commit, re-lock (every input, or only the ones named after the branch and
+  # title), and push if that differs from what the remote branch holds.
+  #
+  # Rebuilding from base on every pass is what keeps a side branch mergeable:
+  # nothing is rebased, the lock is simply re-locked on top of wherever base is
+  # now, so a lock change that lands on base never leaves the pull request in
+  # conflict. A side branch whose parent is still base and whose lock already
+  # matches is left alone, so it is only rewritten when base or the lock moves.
   #
   # When the lock goes to a side branch rather than the base branch, the pass
   # also makes sure a pull request carries it. The push itself is what updates
-  # an open one; this only opens one when none is.
+  # an open one; this only opens one when none is, and closes one whose changes
+  # have already reached base some other way.
   #
   # A failed push or pull request is not repaired here. The next pass starts
   # again from the remote, so a push rejected because someone else pushed in
   # between is retried against their commit, and a pull request that could not
   # be opened is retried against the branch that is already pushed.
-  refresh =
+  updateBranch =
     name: repo:
     let
-      dir = "${cfg.stateDirectory}/${name}";
-      target = if repo.pushBranch == null then repo.branch else repo.pushBranch;
-      tokenFile = config.devHost.githubTokenFile;
+      side = repo.pushBranch != null && repo.pushBranch != repo.branch;
     in
     pkgs.writeShellApplication {
-      name = "flake-auto-update-${name}";
+      name = "flake-auto-update-${name}-branch";
       runtimeInputs = [
         pkgs.git
         config.nix.package
         pkgs.coreutils
       ]
-      ++ optionals (target != repo.branch) [
+      ++ optionals side [
         pkgs.gh
+        pkgs.jq
+      ];
+      text = ''
+        target=$1
+        title=$2
+        shift 2
+        base=${escapeShellArg repo.branch}
+
+        git checkout -q -f -B "$target" "origin/$base"
+
+        # No inputs named means all of them.
+        nix flake update "$@"
+
+        # Nothing moved since base: there is nothing to push, and nothing for a
+        # pull request to carry.
+        if git diff --quiet -- flake.lock; then
+          echo "$target: flake.lock already matches origin/$base"
+          ${optionalString side ''
+            # Whatever an open pull request carried has reached base some other
+            # way (another of these pull requests, or a hand edit), so it has
+            # nothing left to merge.
+            for pr in $(gh pr list --state open --base "$base" --head "$target" --json number --jq '.[].number'); do
+              gh pr close "$pr" --delete-branch \
+                --comment "origin/$base already has everything this pull request carried."
+            done
+          ''}
+          exit 0
+        fi
+
+        # The target is already base plus this lock: skipping the push keeps a
+        # side branch from being rewritten every interval. A target whose parent
+        # is no longer base is rebuilt even when the lock is the same, which is
+        # what keeps its pull request rebased on base.
+        current=$(git rev-parse -q --verify "origin/$target" || true)
+        if [ -n "$current" ] \
+          && [ "$(git rev-parse -q --verify "$current^" || true)" = "$(git rev-parse "origin/$base")" ] \
+          && [ "$(git rev-parse -q --verify "$current:flake.lock" || true)" = "$(git hash-object -- flake.lock)" ]; then
+          echo "origin/$target is already origin/$base plus this flake.lock"
+        else
+          git add flake.lock
+          git -c user.name=flake-auto-update \
+            -c "user.email=flake-auto-update@${config.networking.hostName}" \
+            commit -q -m "$title"
+          # The lease is against the remote-tracking ref fetched above: if the
+          # target moved since, the push is refused and the next run starts over.
+          git push --force-with-lease origin "HEAD:refs/heads/$target"
+        fi
+      ''
+      + optionalString side ''
+
+        # Only a side branch needs a pull request; a push to the base branch
+        # is the change.
+        #
+        # The pull request is identified by what it changes, not by its head
+        # commit: the head is rebuilt whenever base moves, but a lock carrying
+        # the same input revisions is the same question. The marker records
+        # those revisions in the body, so a closed or merged pull request for
+        # them is not asked again; an input that moves again is a new question.
+        changes=$(jq -rn --slurpfile old <(git show "origin/$base:flake.lock") --slurpfile new flake.lock '
+          def ref: if . == null then "none" else (.rev // .narHash // "?")[0:12] end;
+          $old[0].nodes as $o
+          | $new[0].nodes | to_entries[]
+          | select(.value.locked != null and .value.locked != $o[.key].locked)
+          | "- `\(.key)`: \($o[.key].locked | ref) → \(.value.locked | ref)"')
+        marker="<!-- flake-auto-update: $(sha256sum <<<"$changes" | cut -c1-16) -->"
+        body=$(printf '%s\n\n%s\n\n%s\n' \
+          "Automated flake.lock refresh from ${config.networking.hostName}. This branch is rebuilt from $base plus one lock commit whenever $base or the lock moves, so it stays mergeable; merge it when it is ready." \
+          "$changes" "$marker")
+
+        prs=$(gh pr list --state all --base "$base" --head "$target" --json number,state,body)
+        open=$(jq -r 'first(.[] | select(.state == "OPEN")) | .number' <<<"$prs")
+
+        if [ -n "$open" ]; then
+          # The push above already updated its commits; the body is kept to
+          # match, so the marker a reviewer closes it under is the right one.
+          if jq -e --argjson n "$open" --arg m "$marker" 'any(.[]; .number == $n and (.body | contains($m)))' <<<"$prs" >/dev/null; then
+            echo "$target already has a pull request for this flake.lock"
+          else
+            gh pr edit "$open" --title "$title" --body "$body"
+          fi
+        elif jq -e --arg m "$marker" 'any(.[]; .body | contains($m))' <<<"$prs" >/dev/null; then
+          echo "$target already had a pull request for these input revisions"
+        else
+          gh pr create --base "$base" --head "$target" --title "$title" --body "$body"
+        fi
+      '';
+    };
+
+  # One pass over one repository: bring a clone up to the remote, then hand
+  # each branch the grouping asks for to updateBranch. Nothing is committed
+  # unless flake.lock changed, so on a quiet day the timer does nothing but
+  # fetch.
+  #
+  # Each branch runs as its own process, so one input that fails to lock or
+  # push does not stop the others; the pass still fails if any of them did.
+  refresh =
+    name: repo:
+    let
+      dir = "${cfg.stateDirectory}/${name}";
+      target = if repo.pushBranch == null then repo.branch else repo.pushBranch;
+      side = target != repo.branch;
+      tokenFile = config.devHost.githubTokenFile;
+      branch = getExe (updateBranch name repo);
+    in
+    pkgs.writeShellApplication {
+      name = "flake-auto-update-${name}";
+      runtimeInputs = [
+        pkgs.git
+        pkgs.coreutils
+      ]
+      ++ optionals side [
         pkgs.gnused
         pkgs.jq
       ];
       text = ''
         dir=${escapeShellArg dir}
-        base=${escapeShellArg repo.branch}
         target=${escapeShellArg target}
 
         if [ ! -d "$dir/.git" ]; then
@@ -51,58 +166,36 @@ let
         cd "$dir"
 
         git fetch -q --prune origin
-        git checkout -q -f -B "$target" "origin/$base"
-
-        nix flake update
-
-        # Nothing moved since base: there is nothing to push, and nothing for a
-        # pull request to carry.
-        if git diff --quiet -- flake.lock; then
-          echo "flake.lock already matches origin/$base"
-          exit 0
-        fi
-
-        # The target already carries this lock: skipping the push keeps a side
-        # branch from being rewritten every interval.
-        if [ "$(git hash-object -- flake.lock)" = "$(git rev-parse -q --verify "origin/$target:flake.lock" || true)" ]; then
-          echo "origin/$target already has this flake.lock"
-        else
-          git add flake.lock
-          git -c user.name=flake-auto-update \
-            -c "user.email=flake-auto-update@${config.networking.hostName}" \
-            commit -q -m "chore: update flake"
-          # The lease is against the remote-tracking ref fetched above: if the
-          # target moved since, the push is refused and the next run starts over.
-          git push --force-with-lease origin "HEAD:refs/heads/$target"
-        fi
       ''
-      + optionalString (target != repo.branch) ''
+      + optionalString (side && tokenFile != null) ''
 
-        # Only a side branch needs a pull request; a push to the base branch
-        # is the change.
-        #
         # gh is handed the same token git pushes with, by asking git for it, so
         # there is one place the GitHub credential is configured (secrets.nix).
-        ${optionalString (tokenFile != null) ''
-          GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' \
-            | GIT_TERMINAL_PROMPT=0 git credential fill \
-            | sed -n 's/^password=//p')
-          export GH_TOKEN
-        ''}
-        sha=$(git rev-parse "origin/$target")
-        prs=$(gh pr list --state all --base "$base" --head "$target" --json state,headRefOid)
+        GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' \
+          | GIT_TERMINAL_PROMPT=0 git credential fill \
+          | sed -n 's/^password=//p')
+        export GH_TOKEN
+      ''
+      + ''
 
-        # An open pull request is already updated by the push above. A closed or
-        # merged one for this exact commit was an answer to this exact lock, so
-        # it is not asked again; a lock that moves again is a new commit, and a
-        # new question.
-        if jq -e --arg sha "$sha" 'any(.[]; .state == "OPEN" or .headRefOid == $sha)' <<<"$prs" >/dev/null; then
-          echo "$target already has a pull request for this flake.lock"
-        else
-          gh pr create --base "$base" --head "$target" \
-            --title "chore: update flake" \
-            --body "Automated flake.lock refresh from ${config.networking.hostName}. This branch is rebuilt from $base plus one lock commit whenever the lock moves, so merge it when it is ready."
-        fi
+        failed=0
+      ''
+      + optionalString (repo.grouping != "on") ''
+        ${branch} "$target" "chore: update flake" || failed=1
+      ''
+      + optionalString (repo.grouping != "off") ''
+
+        # The root's own inputs, as base locks them; one that only follows
+        # another input has nothing of its own to update.
+        inputs=$(git show ${escapeShellArg "origin/${repo.branch}:flake.lock"} \
+          | jq -r '.nodes[.root].inputs | to_entries[] | select(.value | type == "string") | .key')
+        for input in $inputs; do
+          ${branch} "$target-$input" "chore: update flake input $input" "$input" || failed=1
+        done
+      ''
+      + ''
+
+        exit "$failed"
       '';
     };
 
@@ -150,6 +243,14 @@ let
 in
 {
   config = mkIf (cfg.repositories != { }) {
+    # Separate pull requests need somewhere separate to live; pushing each
+    # input straight onto the base branch would just be the ungrouped update
+    # split into commits.
+    assertions = mapAttrsToList (name: repo: {
+      assertion = repo.grouping == "off" || (repo.pushBranch != null && repo.pushBranch != repo.branch);
+      message = "devHost.flakeAutoUpdate.repositories.${name}.grouping = \"${repo.grouping}\" opens a pull request per input, so it needs a pushBranch other than branch.";
+    }) cfg.repositories;
+
     systemd.services = listToAttrs (map (u: u.service) units);
     systemd.timers = listToAttrs (map (u: u.timer) units);
   };

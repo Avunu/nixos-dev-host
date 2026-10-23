@@ -243,12 +243,41 @@ with lib;
                   for every node that pulls it.
 
                   Anything else is a side branch, rebuilt from `branch` plus a
-                  single lock commit on every change, force-pushed with a
-                  lease so a human push to it is never silently overwritten.
-                  Nothing downstream applies a side branch until someone merges
-                  it, so a pull request into `branch` is opened for it when
-                  none is open. Pushing to the open one updates it; one that
-                  was closed or merged for the very same lock is not reopened.
+                  single lock commit whenever `branch` or the lock moves, and
+                  force-pushed with a lease so a human push to it is never
+                  silently overwritten. Rebuilding rather than keeping the old
+                  commit is what keeps it mergeable: a lock change that lands
+                  on `branch` some other way is re-locked on top of, never left
+                  as a conflict. Nothing downstream applies a side branch until
+                  someone merges it, so a pull request into `branch` is opened
+                  for it when none is open. Pushing to the open one updates it;
+                  one that was closed or merged for the very same input
+                  revisions is not reopened, and an open one whose changes have
+                  all reached `branch` is closed.
+                '';
+              };
+
+              grouping = mkOption {
+                type = types.enum [
+                  "off"
+                  "on"
+                  "both"
+                ];
+                default = "off";
+                description = ''
+                  How updated inputs are split into pull requests.
+
+                  - `off`: every input is updated together and pushed to
+                    `pushBranch` (or `branch`) as one change.
+                  - `on`: each of the flake's own inputs is updated on its own,
+                    on a branch named `<pushBranch>-<input>` with its own pull
+                    request, so they can be merged or closed one at a time.
+                  - `both`: the single all-inputs pull request of `off`, and
+                    the per-input pull requests of `on` alongside it. Merging
+                    one of them closes the others that it fully covers and
+                    rebuilds the rest on top of it.
+
+                  `on` and `both` need a `pushBranch` other than `branch`.
                 '';
               };
 
