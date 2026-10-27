@@ -27,25 +27,8 @@ with lib;
       kernelModules = [ "kvm-intel" ];
 
       systemd = {
-        # On, and it had to go on. The scripted initrd this used to run is
-        # deprecated and scheduled for removal in 26.11 — evaluating the
-        # module against current nixpkgs prints exactly that — and this host
-        # tracks nixos-unstable on a timer, so "deprecated" arrives as
-        # "stopped booting" rather than as a warning someone reads.
-        #
-        # It also makes the line below mean something: tpm2.enable is an
-        # option of the systemd initrd, so with the scripted initrd it was
-        # set, merged, and had no effect whatsoever.
-        enable = mkDefault true;
         tpm2.enable = mkDefault true;
       };
-
-      # Was true, next to consoleLogLevel = 0 below, which is the
-      # configuration asking for a loud boot and a silent console at the same
-      # time. Quiet is the half worth keeping: a headless box's boot output
-      # goes to a screen nobody is looking at, and journalctl -b has it
-      # afterwards either way.
-      verbose = mkDefault false;
     };
 
     # The latest kernel, not the LTS one. Hardware is fixed in new kernels
