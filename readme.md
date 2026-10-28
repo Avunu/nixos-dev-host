@@ -49,13 +49,17 @@ then carries on into the new repository's own `nix run`:
   machine can fetch its own configuration;
 - runs `nix flake lock`, commits, and offers `gh repo create --private --push`.
 
-The machine then tracks `github:<owner>/<repo>#<hostName>` (`lib.mkHost`'s
-`deployedConfiguration`): push to the default branch and its next upgrade
-switches to it. Choosing **Continue without one** instead skips all of that and
+The machine then tracks `github:<owner>/<repo>#default` (`lib.mkHost`'s
+`repo`): push to the default branch and its next upgrade switches to it. Choosing **Continue without one** instead skips all of that and
 builds the generic template, whose `/etc/nixos` holds the machine's settings
 (the "local" style below). Both end at the same choice of network install,
-unattended ISO or guided ISO. `nix flake init -t github:Avunu/nixos-dev-host#host`
-gives the repository's files without the wizard.
+unattended ISO or guided ISO. `nix run github:Avunu/nixos-dev-host#bootstrap`
+runs the repository step on its own.
+
+The bootstrap, the template it writes and `lib.mkHost` itself come from
+[nixos-install-helper](https://github.com/Avunu/nixos-install-helper)
+(`lib.mkHost`, documented in its `docs/integration.md`); this flake's
+`lib.mkHost` is that function with `devHost` filled in.
 
 ### An existing checkout
 
@@ -90,7 +94,7 @@ sudo nixos-rebuild switch --flake <flake> \
 ```
 
 `<flake>` is `devHost.upgradeFlake`: `/etc/nixos`, or the host repository's
-`github:Owner/repo#host`. Afterwards `determinate-nixd` adds the cache itself,
+`github:Owner/repo#default`. Afterwards `determinate-nixd` adds the cache itself,
 so nothing more is needed, including for later Determinate Nix upgrades. A
 checkout of this repository needs the same two options for `nix run` and
 `nix build` until its own Nix is Determinate's; the flake's `nixConfig` offers
@@ -106,23 +110,26 @@ generates afresh. Secrets are encrypted to it (and to the operators) once.
 
 The key itself lives in the host's repository as `secrets/key.age`, encrypted to
 the operators only. Enter that repository's devShell (`direnv allow`, via
-`use flake`) and agenix-shell decrypts it into `$agenix__key`; `deploy`, the
+`use flake`) and it is decrypted into `$agenix__key`; `deploy`, the
 wizard and `installerIso` all pick it up from there and write it to
 `/etc/agenix/key` on the target. Outside the devShell (a fresh checkout, before
 `direnv allow`) the wizard decrypts `secrets/key.age` itself with the same SSH
 identities. A missing key stops the install rather than
-producing a machine that cannot decrypt anything. agenix-shell tries
-`$AGENIX_IDENTITY`, then `~/.ssh/id_ed25519` and `~/.ssh/id_rsa` (hosts can
-override the list).
+producing a machine that cannot decrypt anything. The devShell tries
+`$AGENIX_IDENTITY`, then `~/.ssh/id_ed25519` and `~/.ssh/id_rsa` (`lib.mkHost`'s
+`identityPaths`).
 
-`devHost.githubTokenFile` points at a secret holding the nix.conf line
-`access-tokens = github.com=<token>`. nix `!include`s it and git gets the same
-token through a credential helper — both at runtime, so the token never enters
-the store.
+`devHost.githubTokenFile` (an alias of nixos-install-helper's
+`installHelper.githubTokenFile`, which a host repo sets from
+`secrets/github-token.age`) points at a secret holding the token, bare or as
+the nix.conf line `access-tokens = github.com=<token>`. nix `!include`s it and
+git gets the same token through a credential helper — both at runtime, so the
+token never enters the store.
 
 ## A specific machine
 
-A machine with its own repository calls `lib.mkHost` and gets all of the above:
+A machine with its own repository calls `lib.mkHost` and gets all of the above.
+This is the `flake.nix` the bootstrap writes:
 
 ```nix
 {
@@ -136,24 +143,25 @@ A machine with its own repository calls `lib.mkHost` and gets all of the above:
   inputs.nixos-dev-host.url = "github:Avunu/nixos-dev-host";
   inputs.nixpkgs.follows = "nixos-dev-host/nixpkgs";
 
-  outputs = { self, nixpkgs, nixos-dev-host, ... }:
+  outputs = { self, nixpkgs, nixos-dev-host, ... }@inputs:
     let
       host = nixos-dev-host.lib.mkHost {
         inherit self nixpkgs;
         # The host rebuilds straight from its repository; nothing in /etc/nixos.
-        deployedConfiguration = "github:Owner/my-host#my-host";
-        agenixKeyFile = ./secrets/key.age;
-        modules = [ ./host.nix ];   # devHost.* values and anything else
+        repo = "github:Owner/my-host";
+        modules = [ ./host.nix ];   # anything beyond devHost-settings.json
+        specialArgs = { inherit inputs; };
       };
     in
     { inherit (host) nixosModules nixosConfigurations packages apps devShells; };
 }
 ```
 
-With `deployedConfiguration` the repository's `flake.lock` decides every
-version: `system-upgrade` rebuilds when the repository's revision differs from
-the running one, and never updates a lock of its own. Update the lock in the
-repository.
+`lib.mkHost` reads `devHost-settings.json`, `secrets/key.age` and
+`secrets/github-token.age` from the repository by path. The repository's
+`flake.lock` decides every version: `system-upgrade` rebuilds when the
+repository's revision differs from the running one, and never updates a lock of
+its own. Update the lock in the repository.
 
 ### GitHub Actions runners
 
@@ -198,8 +206,8 @@ which carries the reasoning for each one.
 | timeZone / locale | string | America/New_York / en_US.UTF-8 |
 | stateVersion | string | "25.11" |
 | extraPackages | list of packages | [ ] |
-| upgradeFlake | string | /etc/nixos — or a `github:` ref (set by `lib.mkHost`) |
-| githubTokenFile | string or null | null — runtime path of an `access-tokens` line |
+| upgradeFlake | string | /etc/nixos — or a `github:` ref (set for a host repo) |
+| githubTokenFile | string or null | null — runtime path of a GitHub token (alias of `installHelper.githubTokenFile`) |
 
 | features.* | Default |  |
 | --- | --- | --- |
@@ -230,9 +238,6 @@ which carries the reasoning for each one.
 | modules/secrets.nix | the agenix identity and GitHub access |
 | modules/github-repo-runners.nix | self-hosted GitHub Actions runners, one per repository — opt-in, `nixosModules.githubRepoRunners` |
 | pkgs/ | the derivations more than one module needs |
-| lib/mk-host.nix | `lib.mkHost`: a host flake's installers, devShell and configuration |
-| templates/host-repo/ | the files `bootstrap` writes for a new machine (`templates.host`) |
-| scripts/bootstrap.sh | the bootstrap program: key, token, settings, commit, publish |
 
 ## Verifying a change
 

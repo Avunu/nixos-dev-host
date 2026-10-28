@@ -172,7 +172,7 @@ with lib;
     upgradeFlake = mkOption {
       type = types.str;
       default = "/etc/nixos";
-      example = "github:Owner/host-repo#my-host";
+      example = "github:Owner/host-repo#default";
       description = ''
         The flake `system-upgrade` (and its timer) rebuilds from.
 
@@ -183,23 +183,8 @@ with lib;
         flake.lock is authoritative: the machine never updates a lock of its
         own, and rebuilds when the repository's revision differs from the one
         it is running (`nixos-version --configuration-revision`).
-        lib.mkHost sets this for a host installed with `deployedConfiguration`.
-      '';
-    };
-
-    githubTokenFile = mkOption {
-      type = types.nullOr types.str;
-      default = null;
-      example = literalExpression "config.age.secrets.github-token.path";
-      description = ''
-        A file, present at runtime, holding the nix.conf line
-        `access-tokens = github.com=<token>` — typically an agenix secret.
-
-        nix `!include`s it, for private `github:` inputs. git gets the same
-        token through a credential helper, for private clones and for
-        `git+https://` inputs, which nix fetches by running git. It is only
-        ever read at runtime, so the token stays out of the store; a user who
-        cannot read the file gets neither, silently.
+        A host repository (lib.mkHost with `repo`) sets this to the
+        repository's `installHelper.repo.flakeRef`.
       '';
     };
 
