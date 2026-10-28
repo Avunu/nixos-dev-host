@@ -29,12 +29,6 @@
       inputs.darwin.follows = "";
       inputs.home-manager.follows = "";
     };
-    # Decrypts a host repo's secrets/key.age into $agenix__key when its devShell
-    # starts, which is where every install path picks the key up (lib/mk-host.nix).
-    agenix-shell = {
-      url = "github:aciceri/agenix-shell";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     nixos-install-helper = {
       url = "github:Avunu/nixos-install-helper";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -50,15 +44,26 @@
 
       # This repository's own installer: a generic dev host whose identity is
       # chosen at install time, living on as a small /etc/nixos flake that
-      # imports devHost from here. A specific machine with its own repository
-      # calls lib.mkHost with deployedConfiguration instead (see
-      # lib/mk-host.nix).
+      # imports devHost from here. Started in an empty directory, its wizard
+      # instead bootstraps a repository for one machine, whose flake calls
+      # lib.mkHost with `repo`.
       template = self.lib.mkHost {
         inherit self;
         upstream = "github:Avunu/nixos-dev-host";
-        installer.guidedPrompts = [
-          "hostName"
-          "username"
+        installer = installerDefaults // {
+          guidedPrompts = [
+            "hostName"
+            "username"
+          ];
+        };
+      };
+
+      installerDefaults = {
+        hints."devHost.diskDevice" = "disk-device";
+        # Wiring, not identity: set by lib.mkHost or the host's Nix, never asked.
+        schemaExclude = [
+          "upgradeFlake"
+          "githubTokenFile"
         ];
       };
     in
@@ -72,21 +77,32 @@
       # part of devHost: a host that wants them imports it beside devHost.
       nixosModules.githubRepoRunners = ./modules/github-repo-runners.nix;
 
-      # What `nix run`'s bootstrap writes for a new machine, usable on its own:
-      #   nix flake init -t github:Avunu/nixos-dev-host#host
-      # (the @…@ placeholders are filled in by scripts/bootstrap.sh).
-      templates.host = {
-        path = ./templates/host-repo;
-        description = "A repository for one dev host, rebuilt by the machine from GitHub";
-      };
-
-      lib = {
-        mkHost = import ./lib/mk-host.nix {
-          inherit inputs;
-          inherit (self.nixosModules) devHost;
-        };
-        agenixKeyPath = import ./lib/agenix-key-path.nix;
-      };
+      # nixos-install-helper's lib.mkHost with this project filled in: what this
+      # flake's own installer is built from, and the one call a host repo's
+      # flake makes.
+      lib.mkHost =
+        args:
+        inputs.nixos-install-helper.lib.mkHost (
+          {
+            inherit nixpkgs;
+            module = self.nixosModules.devHost;
+            optionRoot = "devHost";
+            installer = installerDefaults;
+            devShellPackages = [
+              pkgs.just
+              pkgs.nixfmt
+            ];
+            # Determinate Nix is not in cache.nixos.org; without this, building
+            # a host repo from a machine not yet on Determinate compiles Nix.
+            nixConfig = {
+              extra-substituters = [ "https://install.determinate.systems" ];
+              extra-trusted-public-keys = [
+                "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM="
+              ];
+            };
+          }
+          // args
+        );
 
       # The template's installers: `nix run` (the wizard), .#deploy,
       # .#installerIso, .#guidedIso — and a devShell.

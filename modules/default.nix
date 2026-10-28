@@ -52,7 +52,7 @@
     ./services.nix
     ./storage.nix
     ./system.nix
-    (import ./secrets.nix { inherit (inputs) agenix; })
+    (import ./secrets.nix { inherit (inputs) agenix nixos-install-helper; })
   ];
 
   # nix.nix needs the locked nixpkgs revision to pin the flake registry
