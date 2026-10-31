@@ -7,6 +7,35 @@
 with lib;
 let
   cfg = config.devHost.flakeAutoUpdate;
+  app = config.devHost.githubApp;
+  writer = app.writer;
+
+  githubAppToken = import ../pkgs/github-app-token.nix { inherit pkgs; };
+
+  # owner and name of a GitHub repository URL, or null for anything else.
+  githubRepoOf =
+    url:
+    let
+      m = builtins.match "https://github\\.com/([^/]+)/([^/]+)" (removeSuffix "/" url);
+    in
+    if m == null then
+      null
+    else
+      {
+        owner = elemAt m 0;
+        name = removeSuffix ".git" (elemAt m 1);
+      };
+
+  # With the writer App, the push authenticates with the run's own token
+  # (GH_TOKEN, minted in `refresh`) instead of the shared credential helper:
+  # the empty helper clears the system's, and the one after it answers from
+  # the environment. Only the push: `nix flake update` still fetches private
+  # inputs with the shared, read-only token, which can see more than the one
+  # repository this token is narrowed to.
+  pushAuth = optionalString (writer != null) (
+    "-c credential.https://github.com.helper= -c "
+    + escapeShellArg ''credential.https://github.com.helper=!f() { test "$1" = get && printf 'username=x-access-token\npassword=%s\n' "$GH_TOKEN"; }; f''
+  );
 
   # One branch's worth of a pass, run from inside the clone that refresh has
   # just fetched: rebuild the branch as the remote base branch plus one lock
@@ -87,7 +116,13 @@ let
             commit -q -m "$title"
           # The lease is against the remote-tracking ref fetched above: if the
           # target moved since, the push is refused and the next run starts over.
-          git push --force-with-lease origin "HEAD:refs/heads/$target"
+          ${
+            optionalString (writer != null) ''
+              # $GH_TOKEN is single-quoted on purpose: the helper reads it from
+              # the environment, so the token itself is never an argument.
+              # shellcheck disable=SC2016
+            ''
+          }git ${pushAuth} push --force-with-lease origin "HEAD:refs/heads/$target"
         fi
       ''
       + optionalString side ''
@@ -155,7 +190,8 @@ let
       ++ optionals side [
         pkgs.gnused
         pkgs.jq
-      ];
+      ]
+      ++ optional (writer != null) githubAppToken;
       text = ''
         dir=${escapeShellArg dir}
         target=${escapeShellArg target}
@@ -167,7 +203,23 @@ let
 
         git fetch -q --prune origin
       ''
-      + optionalString (side && tokenFile != null) ''
+      + optionalString (writer != null) ''
+
+        # This run's own token, from the writer App: narrowed to this one
+        # repository, contents and pull requests write, and gone within the
+        # hour. The push and gh both take it from GH_TOKEN; it is never written
+        # anywhere, nor passed as an argument.
+        GH_TOKEN=$(github-app-token \
+          --api-url ${escapeShellArg app.apiUrl} \
+          --app-id ${toString writer.appId} \
+          --key-file ${escapeShellArg writer.privateKeyFile} \
+          --owner ${escapeShellArg (githubRepoOf repo.url).owner} \
+          --repository ${escapeShellArg (githubRepoOf repo.url).name} \
+          --permission contents=write \
+          --permission pull_requests=write)
+        export GH_TOKEN
+      ''
+      + optionalString (writer == null && side && tokenFile != null) ''
 
         # gh is handed the same token git pushes with, by asking git for it, so
         # there is one place the GitHub credential is configured (secrets.nix).
@@ -246,10 +298,19 @@ in
     # Separate pull requests need somewhere separate to live; pushing each
     # input straight onto the base branch would just be the ungrouped update
     # split into commits.
-    assertions = mapAttrsToList (name: repo: {
-      assertion = repo.grouping == "off" || (repo.pushBranch != null && repo.pushBranch != repo.branch);
-      message = "devHost.flakeAutoUpdate.repositories.${name}.grouping = \"${repo.grouping}\" opens a pull request per input, so it needs a pushBranch other than branch.";
-    }) cfg.repositories;
+    assertions = concatLists (
+      mapAttrsToList (name: repo: [
+        {
+          assertion = repo.grouping == "off" || (repo.pushBranch != null && repo.pushBranch != repo.branch);
+          message = "devHost.flakeAutoUpdate.repositories.${name}.grouping = \"${repo.grouping}\" opens a pull request per input, so it needs a pushBranch other than branch.";
+        }
+        {
+          # The writer's token is narrowed to the repository by owner and name.
+          assertion = writer == null || githubRepoOf repo.url != null;
+          message = "devHost.flakeAutoUpdate.repositories.${name}.url is not an https://github.com/<owner>/<name> URL, which devHost.githubApp.writer needs to narrow its token to it.";
+        }
+      ]) cfg.repositories
+    );
 
     systemd.services = listToAttrs (map (u: u.service) units);
     systemd.timers = listToAttrs (map (u: u.timer) units);

@@ -295,11 +295,170 @@ with lib;
           lock up on its own system-upgrade run, so the rebuild cadence is still
           set by features.autoUpgrade.
 
-          Pushing needs write access. The push goes through the same GitHub
-          credential helper as the reads, so githubTokenFile has to be a token
-          that can write to every repository listed here. A repository with a
-          pushBranch also gets pull requests opened through the GitHub API with
-          that token, so it needs pull-request write access there too.
+          Pushing needs write access. With githubApp.writer set, every run
+          mints a token of its own for that, narrowed to the one repository.
+          Without it, the push goes through the same GitHub credential helper
+          as the reads, so githubTokenFile has to be a token that can write to
+          every repository listed here. A repository with a pushBranch also
+          gets pull requests opened through the GitHub API with that token, so
+          it needs pull-request write access there too.
+        '';
+      };
+    };
+
+    githubApp = {
+      apiUrl = mkOption {
+        type = types.str;
+        default = "https://api.github.com";
+        description = ''
+          The GitHub REST API both Apps' tokens are minted from. Only a
+          GitHub Enterprise Server (`https://<host>/api/v3`) or a test needs
+          anything else.
+        '';
+      };
+
+      reader = mkOption {
+        type = types.nullOr (
+          types.submodule {
+            options = {
+              appId = mkOption {
+                type = types.ints.positive;
+                example = 123456;
+                description = "The App's numeric App ID (not its client ID).";
+              };
+
+              privateKeyFile = mkOption {
+                type = types.str;
+                example = "/run/agenix/github-app-reader-key";
+                description = ''
+                  Runtime path of the App's PEM private key, readable by root.
+                  A path string, not a Nix path, so the key never enters the
+                  store: an agenix secret, owner root, mode 0400.
+                '';
+              };
+
+              owner = mkOption {
+                type = types.str;
+                default = "Avunu";
+                description = "The organisation (or user) the App is installed on.";
+              };
+
+              repositories = mkOption {
+                type = types.nullOr (types.listOf types.str);
+                default = null;
+                example = [
+                  "my-host"
+                  "private-input"
+                ];
+                description = ''
+                  Repository names (under `owner`) the token is narrowed to.
+                  Null, the default, is every repository the installation can
+                  see.
+                '';
+              };
+
+              permissions = mkOption {
+                type = types.attrsOf (
+                  types.enum [
+                    "read"
+                    "write"
+                  ]
+                );
+                default = {
+                  contents = "read";
+                };
+                description = ''
+                  The permissions the token is narrowed to, a subset of what
+                  the App was granted. The default is what nix and git need to
+                  fetch: contents (metadata comes with it).
+                '';
+              };
+
+              tokenFile = mkOption {
+                type = types.str;
+                default = "/run/github-app/token";
+                description = ''
+                  Where the token is written, as the nix.conf line
+                  `access-tokens = github.com=<token>`: mode 0440, owner root,
+                  group `group`. Under /run, so it never outlives a boot.
+                '';
+              };
+
+              group = mkOption {
+                type = types.str;
+                default = "github-token";
+                description = ''
+                  Group that can read `tokenFile`, and so fetch with it through
+                  nix and git. Declared here; add the users who need it
+                  (`users.groups.<group>.members`).
+                '';
+              };
+
+              refreshInterval = mkOption {
+                type = types.str;
+                default = "45min";
+                description = ''
+                  How often the token is replaced, as a systemd time span. An
+                  installation token lasts an hour, so this has to be
+                  comfortably less.
+                '';
+              };
+            };
+          }
+        );
+        default = null;
+        description = ''
+          A GitHub App whose installation tokens replace a stored token for
+          reading: the token nix and git fetch private repositories with.
+
+          Set, a root service (github-app-reader-token, at boot and every
+          `refreshInterval` after) signs a JWT with the App's private key, asks
+          the installation on `owner` for a token narrowed to `permissions` and
+          `repositories`, and writes it to `tokenFile`. `githubTokenFile`
+          points there — over the `secrets/github-token.age` that lib.mkHost
+          wires up, though not over a `mkForce` — so nix and git use it as they
+          would a stored token. The group can read it directly too: members'
+          nix includes it and their git gets it from the credential helper.
+
+          Nothing is stored that outlives an hour except the private key, and
+          a token that leaks can only read.
+        '';
+      };
+
+      writer = mkOption {
+        type = types.nullOr (
+          types.submodule {
+            options = {
+              appId = mkOption {
+                type = types.ints.positive;
+                example = 123456;
+                description = "The App's numeric App ID (not its client ID).";
+              };
+
+              privateKeyFile = mkOption {
+                type = types.str;
+                example = "/run/agenix/github-app-writer-key";
+                description = ''
+                  Runtime path of the App's PEM private key, readable by root:
+                  an agenix secret, owner root, mode 0400.
+                '';
+              };
+            };
+          }
+        );
+        default = null;
+        description = ''
+          A GitHub App flakeAutoUpdate pushes and opens pull requests with,
+          instead of the shared githubTokenFile token.
+
+          Each run mints its own installation token at the start, narrowed to
+          the one repository it updates and to `contents` and `pull_requests`
+          write, and uses it for the push and for `gh`. The token lives in the
+          run's environment only and expires within the hour. The App needs
+          those two permissions (and no `workflows`) and has to be installed
+          on every repository in flakeAutoUpdate.repositories.
+
+          Null keeps the shared token for pushing, as before.
         '';
       };
     };

@@ -13,6 +13,27 @@
 #     };
 #   };
 #
+# Or for the whole organisation at once, registered through a GitHub App
+# rather than a PAT:
+#
+#   services.githubRepoRunners = {
+#     enable = true;
+#     owner = "Avunu";
+#     githubApp = { appId = 123456; privateKeyFile = config.age.secrets.app-key.path; };
+#     orgRunners = 8;                           # any repository's jobs
+#     runners.bench = { extraLabels = [ "bench" ]; };   # no `repo`: org-wide too
+#   };
+#
+# An organisation runner registers against https://github.com/<owner> and
+# takes jobs from every repository the runner group allows, so labels are what
+# keep one repository's jobs on its own runners. Its registration token is
+# minted just before each start: the App signs a JWT, gets an installation
+# token narrowed to organization_self_hosted_runners, and spends it on
+# `POST /orgs/<owner>/actions/runners/registration-token`; nixpkgs then sees a
+# token it has not registered with and registers afresh, replacing the
+# runner of the same name. So every start is a new registration, and nothing
+# that outlives an hour is stored but the App's key, which only root reads.
+#
 # All runners share one user (so they share one Nix git cache) but each gets
 # its own workDir, so two concurrent jobs cannot collide over one checkout.
 #
@@ -94,9 +115,16 @@ let
   workDirOf = key: "${cfg.workRoot}/work-${key}";
   unitOf = key: "github-runner-${key}";
 
+  githubAppToken = import ../pkgs/github-app-token.nix { inherit pkgs; };
+
+  # Where an App-registered runner's registration token is written, just
+  # before nixpkgs' own ExecStartPre reads it. Root's only.
+  registrationDir = "/run/github-runner-registration";
+  registrationTokenOf = key: "${registrationDir}/${key}";
+
   # Repositories that have a hand-written runner are skipped in `repos`, so
   # listing every repository does not double up on those.
-  covered = lib.mapAttrsToList (_: r: r.repo) cfg.runners;
+  covered = lib.filter (repo: repo != null) (lib.mapAttrsToList (_: r: r.repo) cfg.runners);
 
   # The repositories that get runners from `repos`, and how many each.
   served = lib.filter (repo: !(lib.elem repo covered)) (lib.attrNames cfg.repos);
@@ -114,27 +142,93 @@ let
       runnerName = if n == 1 then cfg.namePrefix else "${cfg.namePrefix}-${toString n}";
       extraLabels = [ ];
       tokenFile = null;
+      runnerGroup = null;
     };
   };
   repoRunners = lib.listToAttrs (
     lib.concatMap (repo: map (mkRepoRunner repo) (lib.range 1 (countOf repo))) served
   );
 
-  allRunners = repoRunners // cfg.runners;
+  # `orgRunners`: organisation runners with the module-wide labels only, for
+  # any repository's jobs. `org-<n>`, registered as `namePrefix-org-<n>`.
+  orgKeys = map (n: "org-${toString n}") (lib.range 1 cfg.orgRunners);
+  orgRunners = lib.listToAttrs (
+    lib.imap1 (
+      n: key:
+      lib.nameValuePair key {
+        repo = null;
+        runnerName = "${cfg.namePrefix}-org-${toString n}";
+        extraLabels = [ ];
+        tokenFile = null;
+        runnerGroup = null;
+      }
+    ) orgKeys
+  );
 
-  mkRunner = key: r: {
-    enable = true;
-    extraLabels = lib.unique (r.extraLabels ++ cfg.extraLabels);
-    inherit (cfg) extraPackages group user;
-    name = r.runnerName;
-    # Let a runner re-register under the same name after a config change,
-    # instead of failing because the name is taken.
-    replace = true;
-    tokenFile = if r.tokenFile != null then r.tokenFile else cfg.tokenFile;
-    url = "https://github.com/${cfg.owner}/${r.repo}";
-    workDir = workDirOf key;
-    package = runnerPackage;
-  };
+  allRunners = repoRunners // orgRunners // cfg.runners;
+
+  # An organisation runner with no token of its own registers through the App.
+  viaApp = r: r.repo == null && r.tokenFile == null && cfg.githubApp != null;
+  appRunners = lib.filterAttrs (_: viaApp) allRunners;
+
+  mintRegistrationToken =
+    key:
+    pkgs.writeShellApplication {
+      name = "github-runner-${key}-registration-token";
+      runtimeInputs = [
+        githubAppToken
+        pkgs.coreutils
+      ];
+      text = ''
+        out=${lib.escapeShellArg (registrationTokenOf key)}
+        umask 077
+        mkdir -p ${registrationDir}
+        token=$(github-app-token \
+          --api-url ${lib.escapeShellArg cfg.githubApp.apiUrl} \
+          --app-id ${toString cfg.githubApp.appId} \
+          --key-file ${lib.escapeShellArg cfg.githubApp.privateKeyFile} \
+          --owner ${lib.escapeShellArg cfg.owner} \
+          --permission organization_self_hosted_runners=write \
+          --registration-token)
+        tmp=$(mktemp "$out.XXXXXX")
+        trap 'rm -f "$tmp"' EXIT
+        # No trailing newline: nixpkgs passes the file's content to the runner as is.
+        printf '%s' "$token" > "$tmp"
+        mv -f "$tmp" "$out"
+        trap - EXIT
+      '';
+    };
+
+  mkRunner =
+    key: r:
+    {
+      enable = true;
+      extraLabels = lib.unique (r.extraLabels ++ cfg.extraLabels);
+      inherit (cfg) extraPackages group user;
+      name = r.runnerName;
+      # Let a runner re-register under the same name after a config change,
+      # instead of failing because the name is taken.
+      replace = true;
+      url =
+        if r.repo == null then
+          "https://github.com/${cfg.owner}"
+        else
+          "https://github.com/${cfg.owner}/${r.repo}";
+      workDir = workDirOf key;
+      package = runnerPackage;
+    }
+    // lib.optionalAttrs (r.runnerGroup != null) { inherit (r) runnerGroup; }
+    // (
+      if viaApp r then
+        {
+          tokenFile = registrationTokenOf key;
+          tokenType = "registration";
+        }
+      else
+        {
+          tokenFile = if r.tokenFile != null then r.tokenFile else cfg.tokenFile;
+        }
+    );
 
   # nixpkgs builds github-runner with node24 only (node20 is end-of-life and
   # gone from nixpkgs), but the runner still runs externals/node20 for its own
@@ -156,10 +250,12 @@ let
   # The extra runners of a repository come after every first runner, so adding
   # one shifts nobody who is already running into a different batch (which
   # would change their unit, and restart them mid-job).
+  # The organisation runners come last, in order, for the same reason.
   firstKeys = map (repo: "repo-${repo}") served;
   repoKeys =
     lib.sort (a: b: a < b) firstKeys
-    ++ lib.sort (a: b: a < b) (lib.filter (key: !(lib.elem key firstKeys)) (lib.attrNames repoRunners));
+    ++ lib.sort (a: b: a < b) (lib.filter (key: !(lib.elem key firstKeys)) (lib.attrNames repoRunners))
+    ++ orgKeys;
   batchSize = cfg.startupBatchSize;
   staggered = lib.listToAttrs (
     lib.imap0 (
@@ -180,8 +276,14 @@ let
     {
       options = {
         repo = mkOption {
-          type = types.str;
-          description = "Name of the repository (under `owner`) this runner serves.";
+          type = types.nullOr types.str;
+          default = null;
+          description = ''
+            Name of the repository (under `owner`) this runner serves. Null, the
+            default, registers it for the whole organisation instead, through
+            `githubApp` unless it has a `tokenFile` of its own (a PAT that
+            administers the organisation's runners).
+          '';
           example = "bench_pequea";
         };
         runnerName = mkOption {
@@ -208,7 +310,18 @@ let
           description = ''
             Token for this runner alone, e.g. a PAT scoped to one repository so
             that revoking it cannot take down any other runner. Defaults to the
-            module-wide `tokenFile`.
+            module-wide `tokenFile`, or for an organisation runner to
+            `githubApp` when that is set.
+          '';
+        };
+        runnerGroup = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = ''
+            Runner group an organisation runner joins (it must exist). Null is
+            the organisation's Default group. A group restricted to some
+            repositories is the way to keep the rest of the organisation's
+            jobs off this runner altogether, where labels only steer them.
           '';
         };
       };
@@ -234,6 +347,60 @@ in
         `services.github-runners.<name>.tokenFile`.
       '';
       example = "/run/agenix/github-runner-token";
+    };
+
+    githubApp = mkOption {
+      type = types.nullOr (
+        types.submodule {
+          options = {
+            appId = mkOption {
+              type = types.ints.positive;
+              example = 123456;
+              description = "The App's numeric App ID (not its client ID).";
+            };
+            privateKeyFile = mkOption {
+              type = types.str;
+              example = "/run/agenix/github-app-key";
+              description = ''
+                Runtime path of the App's PEM private key, readable by root (it
+                is read before the runner drops to its user). A path string, so
+                the key never enters the store.
+              '';
+            };
+            apiUrl = mkOption {
+              type = types.str;
+              default = "https://api.github.com";
+              description = "The GitHub REST API the tokens are minted from.";
+            };
+          };
+        }
+      );
+      default = null;
+      description = ''
+        A GitHub App installed on `owner` with the organisation permission
+        "Self-hosted runners" read and write. Organisation runners (`orgRunners`,
+        and `runners` without a `repo`) register through it: a registration
+        token minted from it just before every start, so no PAT is stored.
+        Repository runners are unaffected and keep using `tokenFile`.
+      '';
+    };
+
+    orgRunners = mkOption {
+      type = types.ints.unsigned;
+      default = 0;
+      description = ''
+        How many organisation runners to run with only the module-wide labels,
+        for any repository's jobs (`runs-on: [self-hosted, <extraLabels>]`).
+        Unlike `repos` they are one pool: an idle one takes the next job from
+        whichever repository has one, so the count is how many jobs the host
+        runs at once, not a reservation per repository. Each is a resident
+        process, so it is a memory budget too.
+
+        Registered through `githubApp`, or `tokenFile` without one (a PAT that
+        administers the organisation's runners). On a public repository a pull
+        request from a fork can run its workflow here unless the workflow
+        sends forks elsewhere.
+      '';
     };
 
     repos = mkOption {
@@ -362,9 +529,15 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = lib.all (r: r.tokenFile != null) (lib.attrValues allRunners) || cfg.tokenFile != null;
-        message = "services.githubRepoRunners: set `tokenFile`, or one on every runner that has none.";
+        assertion =
+          lib.all (r: r.tokenFile != null || viaApp r) (lib.attrValues allRunners) || cfg.tokenFile != null;
+        message = "services.githubRepoRunners: set `tokenFile`, or one on every runner that has none (an organisation runner can register through `githubApp` instead).";
       }
+      {
+        assertion = cfg.githubApp == null || !lib.hasPrefix builtins.storeDir cfg.githubApp.privateKeyFile;
+        message = "services.githubRepoRunners.githubApp.privateKeyFile is in the Nix store, which every user can read. Point it at a runtime secret (an agenix path).";
+      }
+
       {
         # A repository called "foo-2" would otherwise share a key with the second runner of "foo".
         assertion =
@@ -401,13 +574,25 @@ in
 
     services.github-runners = lib.mapAttrs mkRunner allRunners;
 
-    systemd.services = staggered;
+    systemd.services = lib.mkMerge [
+      staggered
+      # The registration token, minted as root ("+": outside the unit's
+      # sandbox, which is also what lets it read the App's key) ahead of
+      # nixpkgs' own steps, which read it from tokenFile and register with it.
+      (lib.mapAttrs' (
+        key: _:
+        lib.nameValuePair (unitOf key) {
+          serviceConfig.ExecStartPre = lib.mkBefore [ "+${lib.getExe (mintRegistrationToken key)}" ];
+        }
+      ) appRunners)
+    ];
 
     # The workDirs are created here, rather than by systemd's RuntimeDirectory,
     # because they have to survive between jobs and across restarts.
     systemd.tmpfiles.rules = [
       "d ${cfg.workRoot} 0750 ${cfg.user} ${cfg.group} -"
     ]
+    ++ lib.optional (appRunners != { }) "d ${registrationDir} 0700 root root -"
     ++ lib.mapAttrsToList (key: _: "d ${workDirOf key} 0750 ${cfg.user} ${cfg.group} -") allRunners;
   };
 }
