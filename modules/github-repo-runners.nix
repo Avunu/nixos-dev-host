@@ -585,6 +585,13 @@ in
           serviceConfig.ExecStartPre = lib.mkBefore [ "+${lib.getExe (mintRegistrationToken key)}" ];
         }
       ) appRunners)
+      # nixpkgs' unconfigure step empties the workDir on every start, and a
+      # runner whose jobs build benches leaves gigabytes there (nix store
+      # copies, node_modules): systemd's default 90 s start timeout kills it
+      # mid-delete and the runner never comes up.
+      (lib.mapAttrs' (
+        key: _: lib.nameValuePair (unitOf key) { serviceConfig.TimeoutStartSec = lib.mkDefault "20min"; }
+      ) allRunners)
     ];
 
     # The workDirs are created here, rather than by systemd's RuntimeDirectory,
