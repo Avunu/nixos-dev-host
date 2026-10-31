@@ -14,7 +14,10 @@
 #                   and its timer
 #   flake-auto-update.nix
 #                   the timer that re-locks a repository's flake and pushes
-#                   the lock (devHost.flakeAutoUpdate, off by default)
+#                   the lock (devHost.flakeAutoUpdate, off by default); with
+#                   githubApp.writer, each run pushes with its own token
+#   github-app.nix  devHost.githubApp.reader: the token nix and git read
+#                   with, minted from a GitHub App (off by default)
 #   networking.nix  systemd-networkd, avahi, ssh, the firewall
 #   services.nix    the remaining daemons, each with a reason to be here
 #   containers.nix  podman and container storage
@@ -28,7 +31,9 @@
 # self-hosted GitHub Actions runners.
 #
 # ../pkgs holds the derivations more than one module needs: the upgrade
-# script (packages.nix installs it, nix.nix times it).
+# script (packages.nix installs it, nix.nix times it) and github-app-token,
+# which mints GitHub App tokens for github-app.nix, flake-auto-update.nix and
+# the runners.
 #
 # The machine this targets is a headless bare-metal box on a LAN: no screen,
 # no battery, nobody sitting in front of it. It is also the machine that does
@@ -46,6 +51,7 @@
     ./boot.nix
     ./containers.nix
     ./flake-auto-update.nix
+    ./github-app.nix
     ./networking.nix
     ./nix.nix
     ./packages.nix

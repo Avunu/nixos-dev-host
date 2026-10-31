@@ -126,6 +126,49 @@ the nix.conf line `access-tokens = github.com=<token>`. nix `!include`s it and
 git gets the same token through a credential helper — both at runtime, so the
 token never enters the store.
 
+### GitHub Apps instead of stored tokens
+
+A stored token lasts until someone rotates it. `devHost.githubApp` replaces it
+with tokens minted from GitHub Apps, which last an hour; the only thing stored is
+each App's private key (an agenix secret, owner root, mode 0400).
+
+```nix
+devHost.githubApp = {
+  # Reading: what nix and git fetch private repositories with.
+  reader = {
+    appId = 123456;
+    privateKeyFile = config.age.secrets.github-app-reader-key.path;
+    # owner = "Avunu";                       # the default
+    # repositories = [ "a" "b" ];            # default null: all it is installed on
+    # permissions = { contents = "read"; };  # the default
+  };
+  # Writing: what flakeAutoUpdate pushes and opens pull requests with.
+  writer = {
+    appId = 654321;
+    privateKeyFile = config.age.secrets.github-app-writer-key.path;
+  };
+};
+users.groups.github-token.members = [ "alice" ];  # who else may fetch with it
+```
+
+- **reader**: a root service, `github-app-reader-token`, runs at boot and every
+  45 minutes (its timer). It signs a JWT (RS256) with the key, finds the App's
+  installation on `owner`, asks for a token narrowed to `permissions` and
+  `repositories`, and writes it atomically to `/run/github-app/token` as
+  `access-tokens = github.com=<token>`, mode 0440, group `github-token`.
+  `githubTokenFile` points there (over the `secrets/github-token.age` that
+  `lib.mkHost` wires up, though not over a `mkForce`), so nix and git read it
+  as they read a stored token, and the group's members get it too.
+- **writer**: each flakeAutoUpdate run mints its own token, narrowed to the
+  repository it updates and to `contents` and `pull_requests` write, and pushes
+  and runs `gh` with it. The App needs no `workflows` permission, and has to be
+  installed on every repository it updates. Without a writer the shared token
+  is used, as before.
+
+Both are off by default. Nothing secret is ever put on a command line, and the
+tokens are never logged. `pkgs/github-app-token.nix` is the minting itself, and
+`tests/github-app.nix` runs all of it against a fake GitHub API.
+
 ## A specific machine
 
 A machine with its own repository calls `lib.mkHost` and gets all of the above.
@@ -179,6 +222,30 @@ services.githubRepoRunners = {
 };
 ```
 
+Or for the whole organisation, registered through a GitHub App with the
+organisation permission "Self-hosted runners" read and write instead of a PAT:
+
+```nix
+services.githubRepoRunners = {
+  enable = true;
+  owner = "Owner";
+  githubApp = {
+    appId = 123456;
+    privateKeyFile = config.age.secrets.github-app-reader-key.path;
+  };
+  extraLabels = [ "nixos" ];
+  orgRunners = 8;                                  # one pool, any repository's jobs
+  runners.bench.extraLabels = [ "bench" ];         # no `repo`: organisation-wide
+};
+```
+
+Each organisation runner gets a registration token minted just before it
+starts, so every start registers it afresh (under the same name). Its jobs come
+from every repository the runner group allows, so a label is what keeps one
+repository's jobs on its own runners, and `runnerGroup` (a group restricted to
+some repositories) is what keeps everyone else's off them. Repository runners
+keep using `tokenFile`.
+
 The module also brings what the runners need to be useful: the `github-runner`
 user (trusted in `nix.settings.trusted-users`, with a home that keeps Nix's git
 cache between jobs), the packages a workflow written for GitHub's hosted Ubuntu
@@ -207,7 +274,9 @@ which carries the reasoning for each one.
 | stateVersion | string | "25.11" |
 | extraPackages | list of packages | [ ] |
 | upgradeFlake | string | /etc/nixos — or a `github:` ref (set for a host repo) |
-| githubTokenFile | string or null | null — runtime path of a GitHub token (alias of `installHelper.githubTokenFile`) |
+| githubTokenFile | string or null | null — runtime path of a GitHub token (alias of `installHelper.githubTokenFile`); the reader's token when `githubApp.reader` is set |
+| githubApp.reader | App or null | null — `{ appId, privateKeyFile, owner ? "Avunu", repositories ? null, permissions ? { contents = "read"; } }`; see above |
+| githubApp.writer | App or null | null — `{ appId, privateKeyFile }`, what flakeAutoUpdate pushes with |
 
 | features.* | Default |  |
 | --- | --- | --- |
@@ -236,8 +305,10 @@ which carries the reasoning for each one.
 | modules/packages.nix | what is installed |
 | modules/system.nix | console, locale, users, documentation |
 | modules/secrets.nix | the agenix identity and GitHub access |
-| modules/github-repo-runners.nix | self-hosted GitHub Actions runners, one per repository — opt-in, `nixosModules.githubRepoRunners` |
+| modules/github-app.nix | the reader App's token service (`devHost.githubApp.reader`) |
+| modules/github-repo-runners.nix | self-hosted GitHub Actions runners, per repository or organisation-wide — opt-in, `nixosModules.githubRepoRunners` |
 | pkgs/ | the derivations more than one module needs |
+| tests/ | the GitHub App VM test and its fake API |
 
 ## Verifying a change
 

@@ -64,6 +64,7 @@
         schemaExclude = [
           "upgradeFlake"
           "githubTokenFile"
+          "githubApp"
         ];
       };
     in
@@ -73,7 +74,8 @@
       nixosModules.devHost = import ./modules { inherit inputs; };
       nixosModules.default = self.nixosModules.devHost;
 
-      # Self-hosted GitHub Actions runners, one per repository. Opt-in, and not
+      # Self-hosted GitHub Actions runners, per repository or for the whole
+      # organisation (through a GitHub App). Opt-in, and not
       # part of devHost: a host that wants them imports it beside devHost.
       nixosModules.githubRepoRunners = ./modules/github-repo-runners.nix;
 
@@ -125,12 +127,44 @@
                 nixDiskDevice = "/dev/disk/by-id/example-nix-disk";
               };
 
-              # Evaluates the runners module, user and all.
+              # Evaluates the runners module, user and all: repository
+              # runners on a PAT, organisation runners through an App.
               services.githubRepoRunners = {
                 enable = true;
                 owner = "example";
                 tokenFile = "/run/example-runner-token";
                 repos.example = 2;
+                githubApp = {
+                  appId = 1;
+                  privateKeyFile = "/run/example-app-key";
+                };
+                orgRunners = 2;
+                runners.labelled.extraLabels = [ "labelled" ];
+              };
+            }
+          ];
+        };
+
+        # The same, with every GitHub App option on: the reader's token in
+        # place of a stored one, and flakeAutoUpdate pushing with the writer.
+        example-github-app = self.nixosConfigurations.example.extendModules {
+          modules = [
+            {
+              devHost = {
+                githubApp = {
+                  reader = {
+                    appId = 1;
+                    privateKeyFile = "/run/example-reader-key";
+                  };
+                  writer = {
+                    appId = 2;
+                    privateKeyFile = "/run/example-writer-key";
+                  };
+                };
+                flakeAutoUpdate.repositories.example = {
+                  url = "https://github.com/example/example.git";
+                  pushBranch = "flake-auto-update";
+                };
               };
             }
           ];
@@ -153,10 +187,15 @@
       # The offline-install-* checks beside it are nixos-install-helper's: they
       # build an ISO and install from it in a network-less VM, so they take a
       # while. Build `.#checks.x86_64-linux.eval` alone for the quick answer.
+      #
+      # github-app runs the token services against a fake GitHub API in a VM
+      # (tests/github-app.nix).
       checks.${system} = template.checks.${system} // {
         eval = pkgs.runCommand "devhost-eval-check" { } ''
           echo "${builtins.unsafeDiscardStringContext self.nixosConfigurations.example.config.system.build.toplevel.drvPath}" > "$out"
+          echo "${builtins.unsafeDiscardStringContext self.nixosConfigurations.example-github-app.config.system.build.toplevel.drvPath}" >> "$out"
         '';
+        github-app = pkgs.testers.runNixOSTest (import ./tests/github-app.nix { inherit inputs; });
       };
 
       formatter.${system} = pkgs.nixfmt;
