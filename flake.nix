@@ -190,12 +190,15 @@
       #
       # github-app runs the token services against a fake GitHub API in a VM
       # (tests/github-app.nix).
+      # github-runner-cleanup checks the runners' shared Nix cache, its pruning
+      # and the removal of retired runners' directories, also in a VM.
       checks.${system} = template.checks.${system} // {
         eval = pkgs.runCommand "devhost-eval-check" { } ''
           echo "${builtins.unsafeDiscardStringContext self.nixosConfigurations.example.config.system.build.toplevel.drvPath}" > "$out"
           echo "${builtins.unsafeDiscardStringContext self.nixosConfigurations.example-github-app.config.system.build.toplevel.drvPath}" >> "$out"
         '';
         github-app = pkgs.testers.runNixOSTest (import ./tests/github-app.nix { inherit inputs; });
+        github-runner-cleanup = pkgs.testers.runNixOSTest ./tests/github-runner-cleanup.nix;
       };
 
       formatter.${system} = pkgs.nixfmt;

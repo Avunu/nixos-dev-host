@@ -34,8 +34,16 @@
 # runner of the same name. So every start is a new registration, and nothing
 # that outlives an hour is stored but the App's key, which only root reads.
 #
-# All runners share one user (so they share one Nix git cache) but each gets
-# its own workDir, so two concurrent jobs cannot collide over one checkout.
+# All runners share one user and one Nix fetcher cache (`nixCache`), but each
+# gets its own workDir, so two concurrent jobs cannot collide over one
+# checkout. The cache has to be pointed at explicitly: nixpkgs sets every
+# runner's HOME to its workDir, so ~/.cache/nix would be one full copy of every
+# git input per runner (10 GB each, within a day, on nix-runner-elitedesk).
+#
+# What the runners leave behind is cleaned up too: a runner that is renamed
+# or removed leaves its workDir and state directory (and the GC roots in
+# them) where they were, so those are deleted (`removeStaleDirs`), and the
+# shared cache is pruned of repositories no job has fetched for a while.
 #
 # Not part of nixosModules.devHost: a host opts in by importing
 # nixos-dev-host.nixosModules.githubRepoRunners. The one thing it still
@@ -114,6 +122,123 @@ let
 
   workDirOf = key: "${cfg.workRoot}/work-${key}";
   unitOf = key: "github-runner-${key}";
+
+  # ── Cleanup ──────────────────────────────────────────────────
+  # nixpkgs puts every runner's state directory in %S/github-runner/<name>.
+  stateRoot = "/var/lib/github-runner";
+  workRoot = toString cfg.workRoot;
+  cacheDir = cfg.nixCache.directory;
+
+  # What belongs in `root`: the state directories of every runner nixpkgs
+  # knows about (not only this module's), their workDirs, and the shared
+  # cache if it lives there. Anything else that is a directory and not hidden
+  # is what a runner that no longer exists left behind.
+  expectedIn =
+    root:
+    let
+      runners = config.services.github-runners;
+      topOf = path: lib.head (lib.splitString "/" (lib.removePrefix "${root}/" path));
+    in
+    lib.unique (
+      lib.optionals (root == stateRoot) (lib.attrNames runners)
+      ++ lib.concatLists (
+        lib.mapAttrsToList (
+          _: r: lib.optional (r.workDir != null && lib.hasPrefix "${root}/" r.workDir) (topOf r.workDir)
+        ) runners
+      )
+      ++ lib.optional (cacheDir != null && lib.hasPrefix "${root}/" cacheDir) (topOf cacheDir)
+    );
+
+  # The names are baked into the script, so the unit changes (and
+  # switch-to-configuration restarts it) whenever a runner comes or goes.
+  removeStaleDirs = pkgs.writeShellApplication {
+    name = "github-runners-remove-stale-dirs";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+    ];
+    text = ''
+      remove_stale() {
+        local root=$1
+        shift
+        [ -d "$root" ] || return 0
+        local -A keep=()
+        local name
+        for name in "$@"; do keep[$name]=1; done
+        while IFS= read -r -d "" name; do
+          if [ -z "''${keep[$name]:-}" ]; then
+            echo "Removing $root/$name: no runner uses it any more."
+            # Not past a mount (a container's subvolume, say); that much stays.
+            rm -rf --one-file-system -- "''${root:?}/$name" ||
+              echo "Could not remove all of $root/$name."
+          fi
+        done < <(find "$root" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\0')
+      }
+    ''
+    +
+      lib.concatMapStrings
+        (root: ''
+          remove_stale ${lib.escapeShellArgs ([ root ] ++ expectedIn root)}
+        '')
+        (
+          lib.unique [
+            stateRoot
+            workRoot
+          ]
+        );
+  };
+
+  # Runs as the runners' user, so nothing it creates in the cache (the lock
+  # files) ends up owned by root.
+  pruneNixCache = pkgs.writeShellApplication {
+    name = "github-runners-prune-nix-cache";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.util-linux
+    ];
+    text = ''
+      cache=${lib.escapeShellArg cacheDir}
+      days=${toString cfg.nixCache.pruneAfter}
+
+      # gitv3 holds one bare repository per git input, beside a <name>.lock
+      # that Nix flock()s while it fetches into it. A repository none of whose
+      # top two levels (refs, FETCH_HEAD, objects/pack, …) changed in $days days
+      # has not been fetched into since, and goes: a later job that needs it
+      # clones it again. Holding its lock while deleting keeps this off a fetch
+      # that is under way.
+      if [ -d "$cache/gitv3" ]; then
+        while IFS= read -r -d "" repo; do
+          path=$cache/gitv3/$repo
+          if [ -n "$(find "$path" -maxdepth 2 -mtime "-$days" -print -quit)" ] ||
+            [ -n "$(find "$path.lock" -maxdepth 0 -mtime "-$days" -print -quit 2>/dev/null)" ]; then
+            continue
+          fi
+          if flock -n "$path.lock" rm -rf -- "$path"; then
+            rm -f -- "$path.lock"
+            echo "Pruned gitv3/$repo: not fetched into for $days days."
+          else
+            echo "Skipped gitv3/$repo: in use."
+          fi
+        done < <(find "$cache/gitv3" -mindepth 1 -maxdepth 1 -type d -printf '%f\0')
+        # Locks whose repository is gone.
+        while IFS= read -r -d "" lock; do
+          [ -e "''${lock%.lock}" ] || rm -f -- "$lock"
+        done < <(find "$cache/gitv3" -mindepth 1 -maxdepth 1 -type f -name '*.lock' -mtime "+$days" -print0)
+      fi
+
+      # One SQLite database per flake evaluated, with its -wal and -shm; one
+      # that nobody wrote to in $days days goes, all three files together (a
+      # hit costs a re-evaluation at worst).
+      if [ -d "$cache/eval-cache-v6" ]; then
+        while IFS= read -r -d "" db; do
+          if [ -z "$(find "$db" "$db-wal" "$db-shm" -maxdepth 0 -mtime "-$days" -print -quit 2>/dev/null)" ]; then
+            rm -f -- "$db" "$db-wal" "$db-shm"
+          fi
+        done < <(find "$cache/eval-cache-v6" -mindepth 1 -maxdepth 1 -type f -name '*.sqlite' -printf '%p\0')
+      fi
+    '';
+  };
 
   githubAppToken = import ../pkgs/github-app-token.nix { inherit pkgs; };
 
@@ -217,6 +342,10 @@ let
       workDir = workDirOf key;
       package = runnerPackage;
     }
+    # Nix reads NIX_CACHE_HOME ahead of XDG_CACHE_HOME and ~/.cache/nix, and
+    # nothing else does, so only Nix's cache moves: the other tools' caches
+    # stay in the workDir.
+    // lib.optionalAttrs (cacheDir != null) { extraEnvironment.NIX_CACHE_HOME = cacheDir; }
     // lib.optionalAttrs (r.runnerGroup != null) { inherit (r) runnerGroup; }
     // (
       if viaApp r then
@@ -499,9 +628,8 @@ in
       default = true;
       description = ''
         Declare `user` and `group`: a system user whose home is `workRoot`.
-        Home is what makes sharing one user worth doing, since Nix's git cache
-        (~/.cache/nix/gitv3) persists there between jobs and a submodule fetch
-        is incremental.
+        (The runners themselves run with HOME set to their own workDir, which
+        nixpkgs empties on every start; what they share is `nixCache`.)
 
         Turn it off to bring your own, which then needs the `podman` group too
         if `dockerSocket` is on. Either way `user` is added to
@@ -523,6 +651,48 @@ in
       type = types.ints.positive;
       default = 8;
       description = "How many of the `repos` runners start (and register) at a time.";
+    };
+
+    nixCache = {
+      directory = mkOption {
+        type = types.nullOr types.str;
+        default = "/var/cache/github-runner-nix";
+        description = ''
+          Nix's fetcher cache (git inputs in gitv3, tarballs, the evaluation
+          cache), shared by every runner through NIX_CACHE_HOME. Nix locks
+          each git repository in it while it fetches, so concurrent jobs can
+          share it. One copy of each input, fetched incrementally, instead of
+          one per runner that nixpkgs throws away whenever the runner
+          restarts.
+
+          Null leaves Nix on ~/.cache/nix, which for a runner is in its workDir.
+        '';
+      };
+
+      pruneAfter = mkOption {
+        type = types.ints.positive;
+        default = 14;
+        description = ''
+          Days after which a git repository nothing has fetched into, or an
+          evaluation cache nothing has written to, is pruned from
+          `nixCache.directory`, weekly. A job that needs one again re-fetches
+          it. tarball-cache-v2 (GitHub inputs, nixpkgs) is one repository
+          for every tarball and is left alone.
+        '';
+      };
+    };
+
+    removeStaleDirs = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Delete what runners that no longer exist left in `workRoot` and in
+        /var/lib/github-runner: their workDirs (checkouts, `result` links that
+        are GC roots) and state directories. Runs at boot and on every switch
+        that adds or removes a runner. These directories belong to the runners:
+        any non-hidden directory in them that is not a current runner's
+        (any services.github-runners entry, not only this module's) is removed.
+      '';
     };
   };
 
@@ -592,13 +762,59 @@ in
       (lib.mapAttrs' (
         key: _: lib.nameValuePair (unitOf key) { serviceConfig.TimeoutStartSec = lib.mkDefault "20min"; }
       ) allRunners)
+      # The runners' sandbox (ProtectSystem = strict) makes everything but
+      # their workDir read-only.
+      (lib.mkIf (cacheDir != null) (
+        lib.mapAttrs' (
+          key: _: lib.nameValuePair (unitOf key) { serviceConfig.ReadWritePaths = [ cacheDir ]; }
+        ) allRunners
+      ))
+      (lib.mkIf cfg.removeStaleDirs {
+        # Type = exec with RemainAfterExit: boot and the switch do not wait on
+        # a large delete, and a switch that changes the set of runners (and
+        # so the script) restarts it.
+        github-runners-remove-stale-dirs = {
+          description = "Remove the directories of GitHub runners that no longer exist";
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig = {
+            Type = "exec";
+            RemainAfterExit = true;
+            ExecStart = lib.getExe removeStaleDirs;
+            Nice = 19;
+            IOSchedulingClass = "idle";
+          };
+        };
+      })
+      (lib.mkIf (cacheDir != null) {
+        github-runners-prune-nix-cache = {
+          description = "Prune the GitHub runners' shared Nix cache";
+          serviceConfig = {
+            Type = "oneshot";
+            User = cfg.user;
+            Group = cfg.group;
+            ExecStart = lib.getExe pruneNixCache;
+            Nice = 19;
+            IOSchedulingClass = "idle";
+          };
+        };
+      })
     ];
+
+    systemd.timers.github-runners-prune-nix-cache = lib.mkIf (cacheDir != null) {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "weekly";
+        Persistent = true;
+        RandomizedDelaySec = "1h";
+      };
+    };
 
     # The workDirs are created here, rather than by systemd's RuntimeDirectory,
     # because they have to survive between jobs and across restarts.
     systemd.tmpfiles.rules = [
       "d ${cfg.workRoot} 0750 ${cfg.user} ${cfg.group} -"
     ]
+    ++ lib.optional (cacheDir != null) "d ${cacheDir} 0750 ${cfg.user} ${cfg.group} -"
     ++ lib.optional (appRunners != { }) "d ${registrationDir} 0700 root root -"
     ++ lib.mapAttrsToList (key: _: "d ${workDirOf key} 0750 ${cfg.user} ${cfg.group} -") allRunners;
   };
