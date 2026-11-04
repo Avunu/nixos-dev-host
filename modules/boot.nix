@@ -24,7 +24,9 @@ with lib;
         "uhci_hcd"
         "xhci_pci"
       ];
-      kernelModules = [ "kvm-intel" ];
+      # No kvm-intel or kvm-amd here. The kernel loads whichever one the CPU can
+      # use by itself, and naming kvm-intel made every AMD host fail
+      # systemd-modules-load in the initrd, with no effect on KVM.
 
       systemd = {
         tpm2.enable = mkDefault true;
