@@ -255,6 +255,16 @@ turns it off). The host owns the token's secret. See
 [modules/github-repo-runners.nix](modules/github-repo-runners.nix) for every
 option.
 
+Garbage collection waits for the jobs, because one during a job deletes store
+paths its later steps need. nix-gc looks for a moment with no job running
+(`gc.idleWait`), then holds new jobs back while the running ones finish
+(`gc.drainWait`). If they don't finish, it gives up and nix-gc.service fails.
+determinate-nixd's own disk-pressure collector can't be made to wait, so it is
+turned off, and nix-gc also runs when less than `gc.minFreePercent` of the store's
+disk is free. That setting reaches a running daemon only after `systemctl restart
+nix-daemon`, so do that while no job is running, or reboot. Run a manual collection
+with `systemctl start nix-gc`, not `nix-collect-garbage`.
+
 ## Configuration
 
 Everything is under `devHost.*`. See [modules/options.nix](modules/options.nix),
