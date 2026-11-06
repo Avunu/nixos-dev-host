@@ -45,6 +45,8 @@
 # them) where they were, so those are deleted (`removeStaleDirs`), and the
 # shared cache is pruned of repositories no job has fetched for a while.
 #
+# Garbage collection waits for the jobs: see `gcGate` below.
+#
 # Not part of nixosModules.devHost: a host opts in by importing
 # nixos-dev-host.nixosModules.githubRepoRunners. The one thing it still
 # provides itself is the token's agenix secret, owned by `user`.
@@ -122,6 +124,114 @@ let
 
   workDirOf = key: "${cfg.workRoot}/work-${key}";
   unitOf = key: "github-runner-${key}";
+
+  # ── Garbage collection ───────────────────────────────────────
+  # A job's store paths are not all rooted while it runs. A step that built
+  # something and a later step that uses it share a store path and nothing
+  # else, so a collection between the two takes it away and every job on the
+  # machine fails in the same second. So on a runner host nothing collects
+  # while a job runs:
+  #
+  #   - each job's started hook takes the lock shared, marks the job as running
+  #     and lets go; its completed hook removes the mark. While a collection
+  #     holds the lock, a job starting just waits in its hook.
+  #   - nix-gc takes the lock exclusively and collects only with no job marked.
+  #     It looks for an idle moment for `gc.idleWait`, and then holds the lock
+  #     so running jobs drain and new ones wait, for at most `gc.drainWait`.
+  #   - determinate-nixd's own disk-pressure collector, which no unit here can
+  #     order against, is turned off. `gc.minFreePercent` replaces it.
+  #
+  # `nix-collect-garbage` run by hand is not covered: use
+  # `systemctl start nix-gc` on these machines.
+  gateDir = "/run/github-runners-gc";
+  gateLock = "${gateDir}/lock";
+  gateJobs = "${gateDir}/jobs";
+  gateStamp = "${gateDir}/last-collection";
+
+  # The runner runs a hook as `bash -e`, and only one whose name ends in .sh. A
+  # gate that cannot do its work must never be what fails a job.
+  jobStartedHook =
+    key:
+    pkgs.writeShellScript "github-runner-job-started-${key}.sh" ''
+      exec 9>${gateLock} || exit 0
+      ${pkgs.util-linux}/bin/flock -s 9 || exit 0
+      : >${gateJobs}/${key} || exit 0
+    '';
+  jobCompletedHook =
+    key:
+    pkgs.writeShellScript "github-runner-job-completed-${key}.sh" ''
+      ${pkgs.coreutils}/bin/rm -f ${gateJobs}/${key} || exit 0
+    '';
+
+  # Holds fd 9, the lock, through the exec, so it is let go of when the
+  # collection ends, whichever way it ends.
+  gatedCollection = pkgs.writeShellApplication {
+    name = "github-runners-gated-gc";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.procps
+      pkgs.util-linux
+    ];
+    text = ''
+      idle_until=$((SECONDS + ${toString (cfg.gc.idleWait * 60)}))
+      exec 9>${gateLock}
+
+      # Call with the lock held, so no job is between its Runner.Worker
+      # starting and its mark being written. With no Runner.Worker on the
+      # machine, any mark left is from a runner that died mid-job.
+      jobs_running() {
+        if ! pgrep -f 'Runner\.Worker' >/dev/null; then
+          find ${gateJobs} -mindepth 1 -delete
+          return 1
+        fi
+        [ -n "$(ls -A ${gateJobs})" ]
+      }
+
+      while :; do
+        flock 9
+        jobs_running || break
+        if [ "$SECONDS" -ge "$idle_until" ]; then
+          echo "No idle moment in ${toString cfg.gc.idleWait} minutes: holding new jobs back until the running ones finish."
+          drain_until=$((SECONDS + ${toString (cfg.gc.drainWait * 60)}))
+          while jobs_running; do
+            if [ "$SECONDS" -ge "$drain_until" ]; then
+              echo "Jobs still running after ${toString cfg.gc.drainWait} minutes: not collecting."
+              exit 1
+            fi
+            sleep 30
+          done
+          break
+        fi
+        flock -u 9
+        sleep 30
+      done
+
+      touch ${gateStamp}
+      exec ${config.nix.package.out}/bin/nix-collect-garbage ${config.nix.gc.options}
+    '';
+  };
+
+  # A collection that frees nothing must not drain the jobs again an hour
+  # later, hence the stamp.
+  collectUnderPressure = pkgs.writeShellApplication {
+    name = "github-runners-gc-under-pressure";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.systemd
+    ];
+    text = ''
+      used=$(df --output=pcent /nix/store | tail -n 1 | tr -dc '0-9')
+      [ "$((100 - used))" -lt ${toString cfg.gc.minFreePercent} ] || exit 0
+      if [ -n "$(find ${gateStamp} -mmin -360 2>/dev/null)" ]; then
+        echo "Only $((100 - used))% of /nix/store is free, but it was collected in the last 6 hours."
+        exit 0
+      fi
+      echo "Only $((100 - used))% of /nix/store is free: collecting."
+      systemctl start --no-block nix-gc.service
+    '';
+  };
 
   # ── Cleanup ──────────────────────────────────────────────────
   # nixpkgs puts every runner's state directory in %S/github-runner/<name>.
@@ -345,7 +455,14 @@ let
     # Nix reads NIX_CACHE_HOME ahead of XDG_CACHE_HOME and ~/.cache/nix, and
     # nothing else does, so only Nix's cache moves: the other tools' caches
     # stay in the workDir.
-    // lib.optionalAttrs (cacheDir != null) { extraEnvironment.NIX_CACHE_HOME = cacheDir; }
+    // {
+      extraEnvironment =
+        lib.optionalAttrs (cacheDir != null) { NIX_CACHE_HOME = cacheDir; }
+        // lib.optionalAttrs cfg.gc.waitForJobs {
+          ACTIONS_RUNNER_HOOK_JOB_STARTED = toString (jobStartedHook key);
+          ACTIONS_RUNNER_HOOK_JOB_COMPLETED = toString (jobCompletedHook key);
+        };
+    }
     // lib.optionalAttrs (r.runnerGroup != null) { inherit (r) runnerGroup; }
     // (
       if viaApp r then
@@ -682,6 +799,49 @@ in
       };
     };
 
+    gc = {
+      waitForJobs = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Collect Nix garbage only while no job is running, and turn off
+          determinate-nixd's own disk-pressure collector, which cannot be made
+          to wait. A collection during a job deletes the paths its later steps
+          need.
+        '';
+      };
+
+      idleWait = mkOption {
+        type = types.ints.unsigned;
+        default = 60;
+        description = ''
+          Minutes nix-gc looks for a moment with no job running, without
+          getting in anyone's way, before it starts holding new jobs back.
+        '';
+      };
+
+      drainWait = mkOption {
+        type = types.ints.positive;
+        default = 180;
+        description = ''
+          Minutes nix-gc then holds new jobs back while the running ones
+          finish. If they have not, it gives up, nix-gc.service fails, and new
+          jobs carry on. Longer than the longest job you expect, or it can never
+          succeed on a busy machine.
+        '';
+      };
+
+      minFreePercent = mkOption {
+        type = types.ints.between 0 100;
+        default = 15;
+        description = ''
+          Run nix-gc when less than this much of /nix/store's filesystem is
+          free, checked hourly, and at most every 6 hours. This takes the place
+          of determinate-nixd's collector. 0 leaves only `nix.gc.dates`.
+        '';
+      };
+    };
+
     removeStaleDirs = mkOption {
       type = types.bool;
       default = true;
@@ -755,6 +915,26 @@ in
           serviceConfig.ExecStartPre = lib.mkBefore [ "+${lib.getExe (mintRegistrationToken key)}" ];
         }
       ) appRunners)
+      # A runner that is starting is running no job, whatever it left behind.
+      (lib.mkIf cfg.gc.waitForJobs (
+        lib.mapAttrs' (
+          key: _:
+          lib.nameValuePair (unitOf key) {
+            serviceConfig.ExecStartPre = lib.mkBefore [ "+${pkgs.coreutils}/bin/rm -f ${gateJobs}/${key}" ];
+            serviceConfig.ReadWritePaths = [ gateDir ];
+          }
+        ) allRunners
+      ))
+      (lib.mkIf cfg.gc.waitForJobs {
+        nix-gc.script = lib.mkForce "exec ${lib.getExe gatedCollection}";
+        github-runners-gc-under-pressure = lib.mkIf (cfg.gc.minFreePercent > 0) {
+          description = "Collect Nix garbage if the store's disk is nearly full";
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = lib.getExe collectUnderPressure;
+          };
+        };
+      })
       # nixpkgs' unconfigure step empties the workDir on every start, and a
       # runner whose jobs build benches leaves gigabytes there (nix store
       # copies, node_modules): systemd's default 90 s start timeout kills it
@@ -809,12 +989,44 @@ in
       };
     };
 
+    systemd.timers.github-runners-gc-under-pressure =
+      lib.mkIf (cfg.gc.waitForJobs && cfg.gc.minFreePercent > 0)
+        {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnBootSec = "15min";
+            OnUnitActiveSec = "1h";
+          };
+        };
+
+    # determinate-nixd collects on its own schedule when a disk fills up, which
+    # no unit can be ordered against. Written whole because the determinate
+    # module's edgeCacheSubstituters writes this file too, and that module is
+    # not a given here: this module can be imported without devHost.
+    environment.etc."determinate/config.json" = lib.mkIf cfg.gc.waitForJobs {
+      text = lib.mkForce (
+        builtins.toJSON (
+          {
+            garbageCollector.strategy = "disabled";
+          }
+          // lib.optionalAttrs ((config.determinate.edgeCacheSubstituters or null) != null) {
+            inherit (config.determinate) edgeCacheSubstituters;
+          }
+        )
+      );
+    };
+
     # The workDirs are created here, rather than by systemd's RuntimeDirectory,
     # because they have to survive between jobs and across restarts.
     systemd.tmpfiles.rules = [
       "d ${cfg.workRoot} 0750 ${cfg.user} ${cfg.group} -"
     ]
     ++ lib.optional (cacheDir != null) "d ${cacheDir} 0750 ${cfg.user} ${cfg.group} -"
+    ++ lib.optionals cfg.gc.waitForJobs [
+      "d ${gateDir} 0750 ${cfg.user} ${cfg.group} -"
+      "d ${gateJobs} 0750 ${cfg.user} ${cfg.group} -"
+      "f ${gateLock} 0640 ${cfg.user} ${cfg.group} -"
+    ]
     ++ lib.optional (appRunners != { }) "d ${registrationDir} 0700 root root -"
     ++ lib.mapAttrsToList (key: _: "d ${workDirOf key} 0750 ${cfg.user} ${cfg.group} -") allRunners;
   };

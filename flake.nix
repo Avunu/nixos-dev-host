@@ -192,6 +192,7 @@
       # (tests/github-app.nix).
       # github-runner-cleanup checks the runners' shared Nix cache, its pruning
       # and the removal of retired runners' directories, also in a VM.
+      # github-runner-gc checks that garbage collection waits for the runners' jobs.
       checks.${system} = template.checks.${system} // {
         eval = pkgs.runCommand "devhost-eval-check" { } ''
           echo "${builtins.unsafeDiscardStringContext self.nixosConfigurations.example.config.system.build.toplevel.drvPath}" > "$out"
@@ -199,6 +200,9 @@
         '';
         github-app = pkgs.testers.runNixOSTest (import ./tests/github-app.nix { inherit inputs; });
         github-runner-cleanup = pkgs.testers.runNixOSTest ./tests/github-runner-cleanup.nix;
+        github-runner-gc = pkgs.testers.runNixOSTest (
+          import ./tests/github-runner-gc.nix { inherit inputs; }
+        );
       };
 
       formatter.${system} = pkgs.nixfmt;
