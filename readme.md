@@ -265,6 +265,27 @@ disk is free. That setting reaches a running daemon only after `systemctl restar
 nix-daemon`, so do that while no job is running, or reboot. Run a manual collection
 with `systemctl start nix-gc`, not `nix-collect-garbage`.
 
+`nix.gc.options` takes `--delete-older-than` in whole days, written like `7d`.
+Nix refuses anything else (`1w` was this module's default once, and every
+collection on every host failed at once), so the module asserts it at evaluation.
+
+A runner's workDir is also its `HOME`, and nothing bounds what builds up in it.
+Two settings do:
+
+- `toolCache` points `XDG_CACHE_HOME` (uv, yarn, npm, prek…) at one directory
+  shared by every runner instead of a copy in each workDir, and empties it every
+  `resetAfter` days while no job is running anywhere. Nix's own cache stays
+  `nixCache`.
+- `sweep` removes the checkouts a runner has not used for `maxAge` days, and
+  when less than `minFreePercent` of the disk is free, the stalest ones first
+  until `targetFreePercent` is, keeping anything used in the last `protectHours`.
+  It runs hourly, only touches a runner that has no job (the same lock and job
+  marks the collection above uses), and `systemctl start github-runners-sweep`
+  runs it now. `SWEEP_MAX_AGE_DAYS`, `SWEEP_MIN_FREE_PERCENT` and friends
+  override the settings for one run: `systemd-run --wait --pipe -E
+  SWEEP_MAX_AGE_DAYS=1 $(systemctl show -p ExecStart --value
+  github-runners-sweep | grep -o 'path=[^ ]*' | cut -d= -f2)`.
+
 ## Configuration
 
 Everything is under `devHost.*`. See [modules/options.nix](modules/options.nix),
