@@ -82,12 +82,33 @@ in
   }
   // optionalAttrs (inputs.nixpkgs ? rev) { inherit (inputs.nixpkgs) rev; };
 
+  # A host that overrides gc.options can set the same trap the default had: a
+  # value Nix refuses is not an evaluation error, it is a nix-gc.service that
+  # fails every time, and a disk that quietly fills.
+  assertions = [
+    {
+      assertion =
+        let
+          options = config.nix.gc.options;
+        in
+        !config.nix.gc.automatic
+        || !(hasInfix "--delete-older-than" options)
+        || builtins.match ".*--delete-older-than [0-9]+d( .*)?" options != null;
+      message = "nix.gc.options (${config.nix.gc.options}): nix-collect-garbage takes --delete-older-than as whole days written like 14d. Other units, such as 1w, make every collection fail.";
+    }
+  ];
+
   # ── Nix configuration ───────────────────────────────────────
   nix = {
     gc = {
       automatic = mkDefault true;
       dates = mkDefault "weekly";
-      options = mkDefault "--delete-older-than 1w";
+      # Whole days, written "Nd": nix-collect-garbage rejects anything else
+      # ("invalid number of days specifier '1w', expected something like
+      # '14d'") before it collects a thing. This used to say "1w", so on every
+      # host built from this module the weekly collection failed at once, and
+      # so did anything else that starts nix-gc.service.
+      options = mkDefault "--delete-older-than 7d";
     };
 
     # Store deduplication, moved off the build path. What it saves is not in

@@ -45,6 +45,19 @@
 # them) where they were, so those are deleted (`removeStaleDirs`), and the
 # shared cache is pruned of repositories no job has fetched for a while.
 #
+# The same HOME also holds every other tool's cache (~/.cache: uv, yarn, prek…),
+# which is where a workDir's disk goes next: 16 GB of it per runner on
+# nix-runner-elitedesk, twenty times over, with 87 GiB on disk for caches that
+# are the same bytes in every runner. `toolCache` points XDG_CACHE_HOME at one
+# shared directory instead, emptied now and then while no job runs.
+#
+# And a workDir keeps a checkout of every repository its runner has ever
+# served. With a pool of runners that take any repository's jobs, that is every
+# repository on every runner (20 × ~40 GB, 94 GiB of it .git). `sweep` removes
+# the checkouts nothing has used for a while, and the stalest ones sooner when
+# the disk runs low. It takes the same gate as garbage collection, so it never
+# removes a checkout from under a running job.
+#
 # Garbage collection waits for the jobs: see `gcGate` below.
 #
 # Not part of nixosModules.devHost: a host opts in by importing
@@ -350,6 +363,193 @@ let
     '';
   };
 
+  # ── Disk bounds ──────────────────────────────────────────────
+  # What nixpkgs' runner leaves in a workDir is not bounded by anything: every
+  # repository the runner has served keeps its checkout (with .git, and
+  # .devenv / .frappe-nix state beside it) until the unit restarts, which
+  # empties the lot. With a pool that takes any repository's jobs, each runner
+  # ends up holding all of them.
+  #
+  # The sweep removes two things, both only while their runner has no job:
+  #   - a checkout whose .git nothing has touched for `sweep.maxAge` days,
+  #     whatever the disk looks like;
+  #   - when the disk holding workRoot has less than `sweep.minFreePercent`
+  #     free, the stalest checkouts of all runners, oldest first, until
+  #     `sweep.targetFreePercent` is free or only the ones used in the last
+  #     `sweep.protectHours` hours are left.
+  # "Used" is the newest .git directory's mtime, not the checkout's own: that
+  # changes whenever git writes the index (every checkout of a job), while the
+  # directories above it stay as they were on the day they were created.
+  #
+  # A checkout is moved into the workDir's .sweep-trash while the gate lock is
+  # held (a rename, so the lock is held for no time), and deleted after it is
+  # let go of. Taking the lock exclusively also keeps this out of the way of a
+  # collection, and the other way round; `flock -w` gives up on a collection
+  # that has been holding it for two minutes and tries again next hour.
+  #
+  # The tool cache (XDG_CACHE_HOME) is emptied when it has been `resetAfter`
+  # days since last time, and only with no job running anywhere: a cache that
+  # grows with every version of every dependency has no better pruning rule
+  # than "start again", which is also what a runner restart has always done to
+  # it. It is emptied in place (the runners have this directory bind-mounted
+  # into their sandboxes, so it must stay the same directory).
+  #
+  # SWEEP_* in the environment override the settings, for a run by hand.
+  toolDir = cfg.toolCache.directory;
+  sweepState = "/var/lib/github-runners-sweep";
+  runnerEntries = lib.concatMapStringsSep " " (key: lib.escapeShellArg "${key} ${workDirOf key}") (
+    lib.attrNames allRunners
+  );
+
+  sweepWorkspaces = pkgs.writeShellApplication {
+    name = "github-runners-sweep";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.gnused
+      pkgs.procps
+      pkgs.util-linux
+    ];
+    text = ''
+      work_root=${lib.escapeShellArg workRoot}
+      tools=${lib.escapeShellArg (if toolDir == null then "" else toolDir)}
+      state=''${STATE_DIRECTORY:-${sweepState}}
+      max_age=$(( ''${SWEEP_MAX_AGE_DAYS:-${toString cfg.sweep.maxAge}} * 86400 ))
+      protect=$(( ''${SWEEP_PROTECT_HOURS:-${toString cfg.sweep.protectHours}} * 3600 ))
+      min_free=''${SWEEP_MIN_FREE_PERCENT:-${toString cfg.sweep.minFreePercent}}
+      target_free=''${SWEEP_TARGET_FREE_PERCENT:-${toString cfg.sweep.targetFreePercent}}
+      reset_days=''${SWEEP_TOOL_CACHE_DAYS:-${toString cfg.toolCache.resetAfter}}
+      runners=(${runnerEntries})
+
+      exec 9>${gateLock}
+
+      free_percent() {
+        local used
+        used=$(df --output=pcent "$work_root" | tail -n 1 | tr -dc '0-9')
+        echo $((100 - used))
+      }
+
+      last_used() {
+        local newest
+        newest=$(find "$1" -maxdepth 3 -name .git -prune -printf '%T@\n' 2>/dev/null | sort -rn | sed -n 1p || true)
+        [ -n "$newest" ] || newest=$(stat -c %Y "$1")
+        echo "''${newest%.*}"
+      }
+
+      # Every checkout, as "last used<TAB>runner<TAB>directory". Not the
+      # hidden entries (the runner's own HOME) nor the _-prefixed ones
+      # (_actions, _tool, _temp: the runner's own).
+      candidates() {
+        local entry key dir d
+        for entry in "''${runners[@]}"; do
+          key=''${entry%% *}
+          dir=''${entry#* }
+          [ -d "$dir" ] || continue
+          while IFS= read -r -d "" d; do
+            printf '%s\t%s\t%s\n' "$(last_used "$d")" "$key" "$d"
+          done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name '_*' -print0)
+        done
+      }
+
+      empty_trash() {
+        local entry dir
+        for entry in "''${runners[@]}"; do
+          dir=''${entry#* }
+          [ -d "$dir/.sweep-trash" ] || continue
+          find "$dir/.sweep-trash" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} +
+        done
+        sync -f "$work_root"
+      }
+
+      # Move one checkout out of its workDir if its runner has no job. The
+      # lock is the one the jobs' started hooks take, so a job that starts
+      # now waits for the rename, and finds the checkout gone.
+      take() {
+        local key=$1 dir=$2 trash
+        flock -w 120 9 || return 1
+        if [ -e ${gateJobs}/"$key" ]; then
+          flock -u 9
+          return 1
+        fi
+        trash=$(dirname "$dir")/.sweep-trash
+        mkdir -p "$trash"
+        mv -T -- "$dir" "$trash/$(basename "$dir").$$"
+        flock -u 9
+      }
+
+      # With the lock held: is the machine free of jobs? Marks with no worker
+      # behind them are a dead runner's.
+      idle() {
+        if ! pgrep -f 'Runner\.Worker' >/dev/null; then
+          find ${gateJobs} -mindepth 1 -delete
+          return 0
+        fi
+        [ -z "$(ls -A ${gateJobs})" ]
+      }
+
+      parse() {
+        IFS=$'\t' read -r ts key dir <<<"$1"
+        age=$(( now - ts ))
+      }
+
+      now=$(date +%s)
+      empty_trash # what an interrupted run left
+
+      mapfile -t found < <(candidates | sort -n)
+
+      for line in "''${found[@]}"; do
+        parse "$line"
+        [ "$age" -gt "$max_age" ] || continue
+        if take "$key" "$dir"; then
+          echo "Swept $dir ($key): not used for $(( age / 86400 )) days."
+        else
+          echo "Kept $dir ($key): its runner has a job, or the gate is busy."
+        fi
+      done
+      empty_trash
+
+      if [ "$(free_percent)" -lt "$min_free" ]; then
+        echo "Only $(free_percent)% of $work_root's disk is free (below $min_free%): sweeping the stalest checkouts."
+        for line in "''${found[@]}"; do
+          [ "$(free_percent)" -lt "$target_free" ] || break
+          parse "$line"
+          [ -d "$dir" ] || continue
+          # Oldest first: everything after this is younger still.
+          [ "$age" -gt "$protect" ] || break
+          if take "$key" "$dir"; then
+            empty_trash
+            echo "Swept $dir ($key): unused for $(( age / 3600 )) hours, disk is low."
+          fi
+        done
+        echo "$(free_percent)% of $work_root's disk is free."
+      fi
+
+      if [ -n "$tools" ] && [ -d "$tools" ]; then
+        mkdir -p "$state"
+        stamp=$state/tool-cache-reset
+        find "$tools" -mindepth 1 -maxdepth 1 -name '.trash.*' -exec rm -rf --one-file-system -- {} +
+        if [ ! -e "$stamp" ]; then
+          touch "$stamp" # the clock starts now
+        elif [ -n "$(find "$stamp" -mtime "+$reset_days" -print -quit)" ]; then
+          if flock -w 120 9; then
+            if idle; then
+              trash=$tools/.trash.$$
+              mkdir -p "$trash"
+              find "$tools" -mindepth 1 -maxdepth 1 ! -name '.trash.*' -exec mv -t "$trash" -- {} +
+              touch "$stamp"
+              flock -u 9
+              echo "Emptied $tools: it was more than $reset_days days since last time."
+              rm -rf --one-file-system -- "$trash"
+            else
+              flock -u 9
+              echo "$tools is due to be emptied, but a job is running: trying again later."
+            fi
+          fi
+        fi
+      fi
+    '';
+  };
+
   githubAppToken = import ../pkgs/github-app-token.nix { inherit pkgs; };
 
   # Where an App-registered runner's registration token is written, just
@@ -453,11 +653,13 @@ let
       package = runnerPackage;
     }
     # Nix reads NIX_CACHE_HOME ahead of XDG_CACHE_HOME and ~/.cache/nix, and
-    # nothing else does, so only Nix's cache moves: the other tools' caches
-    # stay in the workDir.
+    # nothing else does, so NIX_CACHE_HOME moves only Nix's cache. The other
+    # tools' caches follow XDG_CACHE_HOME to `toolCache` (or stay in the
+    # workDir when that is null).
     // {
       extraEnvironment =
         lib.optionalAttrs (cacheDir != null) { NIX_CACHE_HOME = cacheDir; }
+        // lib.optionalAttrs (toolDir != null) { XDG_CACHE_HOME = toolDir; }
         // lib.optionalAttrs cfg.gc.waitForJobs {
           ACTIONS_RUNNER_HOOK_JOB_STARTED = toString (jobStartedHook key);
           ACTIONS_RUNNER_HOOK_JOB_COMPLETED = toString (jobCompletedHook key);
@@ -799,6 +1001,83 @@ in
       };
     };
 
+    toolCache = {
+      directory = mkOption {
+        type = types.nullOr types.str;
+        default = "/var/cache/github-runner-tools";
+        description = ''
+          Where the runners' tools keep their caches (uv, yarn, npm, prek, pip…):
+          XDG_CACHE_HOME, shared by every runner. nixpkgs sets each runner's HOME
+          to its workDir, so without this ~/.cache is one full copy per runner —
+          16 GB each on nix-runner-elitedesk, the same bytes twenty times over.
+          uv, pip and yarn lock what they write, so concurrent jobs can share it.
+
+          Keep it on the filesystem `workRoot` is on: uv and pnpm hard-link from
+          their cache into the environments they build, and fall back to copying
+          across filesystems. Nix's own cache is `nixCache`, which this does not
+          move (Nix reads NIX_CACHE_HOME first).
+
+          Null leaves each runner's tools on ~/.cache in its workDir.
+        '';
+      };
+
+      resetAfter = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = ''
+          Days between emptying the tool cache, which only happens while no job
+          is running on any runner. Nothing prunes a cache by age safely (an entry
+          that is read is not written, and a pointer to a deleted entry is an
+          error in some tools), so it is emptied whole and refills as jobs ask.
+          That is what a runner restart already did to every runner's own copy.
+        '';
+      };
+    };
+
+    sweep = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Remove the checkouts the runners no longer use from their workDirs
+          (see the comment on `sweepWorkspaces` in this module). Needs
+          `gc.waitForJobs`: the sweep takes the lock and the job marks that
+          option sets up, which is how it knows a checkout is not in use.
+        '';
+      };
+
+      maxAge = mkOption {
+        type = types.ints.positive;
+        default = 7;
+        description = ''
+          Days a checkout may go unused before it is removed, whatever the disk
+          looks like. A job that needs it again clones it again.
+        '';
+      };
+
+      protectHours = mkOption {
+        type = types.ints.unsigned;
+        default = 6;
+        description = "A checkout used within this many hours is never removed for lack of space.";
+      };
+
+      minFreePercent = mkOption {
+        type = types.ints.between 0 100;
+        default = 25;
+        description = ''
+          When less than this much of the disk holding `workRoot` is free, the
+          stalest checkouts are removed, oldest first, until `targetFreePercent`
+          is free. Checked hourly. 0 leaves only `maxAge`.
+        '';
+      };
+
+      targetFreePercent = mkOption {
+        type = types.ints.between 0 100;
+        default = 35;
+        description = "Free space the sweep stops at once it has started on `minFreePercent`.";
+      };
+    };
+
     gc = {
       waitForJobs = mkOption {
         type = types.bool;
@@ -878,6 +1157,14 @@ in
         assertion = cfg.dockerSocket -> config.virtualisation.podman.dockerSocket.enable;
         message = "services.githubRepoRunners.dockerSocket needs virtualisation.podman.dockerSocket.enable, which is what provides the socket.";
       }
+      {
+        assertion = cfg.sweep.enable -> cfg.gc.waitForJobs;
+        message = "services.githubRepoRunners.sweep needs gc.waitForJobs: the sweep knows a checkout is idle from the job marks and the lock that option sets up. Turn one off or the other on.";
+      }
+      {
+        assertion = cfg.sweep.targetFreePercent >= cfg.sweep.minFreePercent;
+        message = "services.githubRepoRunners.sweep.targetFreePercent is below minFreePercent: the sweep would stop before it started.";
+      }
     ];
 
     users.groups.${cfg.group} = lib.mkIf cfg.createUser { };
@@ -949,6 +1236,26 @@ in
           key: _: lib.nameValuePair (unitOf key) { serviceConfig.ReadWritePaths = [ cacheDir ]; }
         ) allRunners
       ))
+      (lib.mkIf (toolDir != null) (
+        lib.mapAttrs' (
+          key: _: lib.nameValuePair (unitOf key) { serviceConfig.ReadWritePaths = [ toolDir ]; }
+        ) allRunners
+      ))
+      (lib.mkIf cfg.sweep.enable {
+        github-runners-sweep = {
+          description = "Remove the runners' unused checkouts, and empty their tool cache now and then";
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = lib.getExe sweepWorkspaces;
+            StateDirectory = "github-runners-sweep";
+            Nice = 19;
+            IOSchedulingClass = "idle";
+            # Deleting a few tens of GB of small files is minutes, and a first
+            # sweep of a neglected disk is longer.
+            TimeoutStartSec = "6h";
+          };
+        };
+      })
       (lib.mkIf cfg.removeStaleDirs {
         # Type = exec with RemainAfterExit: boot and the switch do not wait on
         # a large delete, and a switch that changes the set of runners (and
@@ -989,6 +1296,14 @@ in
       };
     };
 
+    systemd.timers.github-runners-sweep = lib.mkIf cfg.sweep.enable {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "30min";
+        OnUnitActiveSec = "1h";
+      };
+    };
+
     systemd.timers.github-runners-gc-under-pressure =
       lib.mkIf (cfg.gc.waitForJobs && cfg.gc.minFreePercent > 0)
         {
@@ -1022,6 +1337,7 @@ in
       "d ${cfg.workRoot} 0750 ${cfg.user} ${cfg.group} -"
     ]
     ++ lib.optional (cacheDir != null) "d ${cacheDir} 0750 ${cfg.user} ${cfg.group} -"
+    ++ lib.optional (toolDir != null) "d ${toolDir} 0750 ${cfg.user} ${cfg.group} -"
     ++ lib.optionals cfg.gc.waitForJobs [
       "d ${gateDir} 0750 ${cfg.user} ${cfg.group} -"
       "d ${gateJobs} 0750 ${cfg.user} ${cfg.group} -"
